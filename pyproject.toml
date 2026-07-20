@@ -5,18 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fastfields-numpy"
 version = "0.1.0"
-description = "A friendly numpy interface over the fastfields_bind bindings."
+description = "A friendly numpy interface over the fastfields.dlpack bindings."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "fastfields" }]
 dependencies = [
-    "fastfields-bind",
+    "fastfields-dlpack",
     "numpy",
 ]
 
 [project.optional-dependencies]
 test = ["pytest"]
 
-[tool.setuptools]
-packages = ["fastfields_numpy"]
+# Ships only the ``fastfields.numpy`` subpackage; no ``fastfields/__init__.py``
+# is created, keeping ``fastfields`` a PEP 420 native namespace package.
+[tool.setuptools.packages.find]
+include = ["fastfields.numpy*"]
+namespaces = true

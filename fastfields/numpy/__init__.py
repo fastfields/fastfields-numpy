@@ -1,9 +1,18 @@
-"""fastfields_numpy: a friendly numpy interface over the ``fastfields_bind`` bindings.
+"""fastfields.numpy: a friendly numpy interface over the ``fastfields.dlpack`` bindings.
 
 The underlying bindings operate *in place* / write through pre-allocated output
 arrays.  This package wraps them so every public function takes numpy arrays and
 **returns** freshly allocated numpy arrays (never clobbering the caller's input
 unless ``inplace=True`` is explicitly requested).
+
+Batch (leading) dimensions are **broadcast**: the raw bindings require every
+input tensor of an op to share the same batch dims (they do not broadcast), so
+these wrappers normalise inputs to a common broadcast batch shape and allocate
+outputs with that shape.  The broadcast is done **zero-copy**: each input is
+re-strided to the target batch shape with 0-strides on the broadcast axes (a
+view that shares memory with the original), which the stride-aware C++ library
+consumes directly without any copy.  Returned outputs therefore carry the
+broadcast batch shape.
 
 Spline order and boundary condition arguments accept an ``int``, one of the
 re-exported :class:`Spline` / :class:`Bound` enums, or a friendly string
@@ -16,8 +25,8 @@ import math
 
 import numpy as np
 
-import fastfields_bind as _ff
-from fastfields_bind import Bound, Spline
+import fastfields.dlpack as _ff
+from fastfields.dlpack import Bound, Spline
 
 __all__ = [
     "Spline",
@@ -147,6 +156,56 @@ def _validate_inplace(x, name="x"):
 
 
 # --------------------------------------------------------------------------- #
+# zero-copy batch-dim broadcasting                                            #
+# --------------------------------------------------------------------------- #
+#
+# The raw bindings require every input tensor of an op to share the same batch
+# (leading) dimensions -- they do not broadcast. We normalise inputs to a
+# common broadcast batch shape *without copying*: each input is re-strided to
+# the target shape, using its real stride on axes that already match and a
+# 0-stride on axes that are broadcast (size 1 -> N). The result shares memory
+# with the source, so the big inputs are never duplicated; the stride-aware
+# C++ library handles the 0-strides natively.
+#
+# We use ``as_strided`` on the (writable) source rather than ``np.broadcast_to``
+# because ``broadcast_to`` returns a *read-only* view, which numpy then refuses
+# to export through DLPack ("cannot export readonly array").
+
+
+def _bcast_view(a, shape):
+    """Return a zero-copy, DLPack-exportable broadcast of ``a`` to ``shape``."""
+    shape = tuple(shape)
+    if a.shape == shape:
+        return a
+    strides = [0] * len(shape)
+    # right-align a's axes against the target shape
+    for i in range(1, a.ndim + 1):
+        dim = a.shape[-i]
+        if dim == shape[-i]:
+            strides[-i] = a.strides[-i]
+        elif dim == 1:
+            strides[-i] = 0
+        else:
+            raise ValueError(
+                f"cannot broadcast array of shape {a.shape} to {shape}"
+            )
+    return np.lib.stride_tricks.as_strided(a, shape, tuple(strides))
+
+
+def _broadcast_batch(specs):
+    """Broadcast the batch dims of several arrays to a common shape.
+
+    ``specs`` is a list of ``(array, n_core)`` pairs, where ``n_core`` is the
+    number of trailing (core) axes that must be left untouched. Returns
+    ``(batch_shape, [views...])`` where each view is broadcast to
+    ``batch_shape + that array's core dims`` (zero-copy).
+    """
+    batch = np.broadcast_shapes(*[a.shape[: a.ndim - nc] for a, nc in specs])
+    views = [_bcast_view(a, batch + a.shape[a.ndim - nc:]) for a, nc in specs]
+    return batch, views
+
+
+# --------------------------------------------------------------------------- #
 # distance transforms                                                         #
 # --------------------------------------------------------------------------- #
 
@@ -197,21 +256,18 @@ def sym_channels_from_packed(packed_len: int) -> int:
 
 
 def _check_sym(mat, vec, matname="mat", vecname="vec"):
+    """Validate dtypes/channels of a packed matrix + vector (no batch check).
+
+    Batch dims are broadcast later, so we only enforce the channel relation
+    ``vec.shape[-1] == C`` and return the contiguous float arrays plus ``C``.
+    """
     mat = _as_float_array(mat, matname)
     vec = _as_float_array(vec, vecname, dtype=mat.dtype)
-    if mat.dtype != vec.dtype:
-        vec = vec.astype(mat.dtype)
-        vec = np.ascontiguousarray(vec)
     c = sym_channels_from_packed(mat.shape[-1])
     if vec.shape[-1] != c:
         raise ValueError(
             f"{vecname} has {vec.shape[-1]} channels but the packed matrix "
             f"encodes {c} channels"
-        )
-    if mat.shape[:-1] != vec.shape[:-1]:
-        raise ValueError(
-            f"batch shapes differ: {matname}{mat.shape[:-1]} vs "
-            f"{vecname}{vec.shape[:-1]}"
         )
     return mat, vec, c
 
@@ -220,65 +276,85 @@ def sym_matvec(mat, vec):
     """``H @ vec`` where ``H`` is a compact-symmetric packed matrix.
 
     ``mat`` has trailing dim ``C*(C+1)/2`` (diagonal first, then upper rows),
-    ``vec`` has trailing dim ``C``.  Returns an array shaped like ``vec``.
+    ``vec`` has trailing dim ``C``.  The batch (leading) dims of ``mat`` and
+    ``vec`` are broadcast; the result has the broadcast batch shape + ``(C,)``.
     """
-    mat, vec, _ = _check_sym(mat, vec)
-    out = np.empty_like(vec)
-    _ff.sym_matvec(out, mat, vec)
+    mat, vec, c = _check_sym(mat, vec)
+    batch, (mat_b, vec_b) = _broadcast_batch([(mat, 1), (vec, 1)])
+    out = np.empty(batch + (c,), dtype=mat.dtype)
+    _ff.sym_matvec(out, mat_b, vec_b)
     return out
 
 
 def sym_addmatvec(out0, mat, vec):
-    """``out0 + H @ vec`` (returns a new array; ``out0`` is not modified)."""
-    mat, vec, _ = _check_sym(mat, vec)
-    out = _as_float_array(out0, "out0", dtype=mat.dtype, copy=True)
-    if out.shape != vec.shape:
-        raise ValueError("out0 must have the same shape as vec")
-    _ff.sym_addmatvec_(out, mat, vec)
+    """``out0 + H @ vec`` (returns a new array; ``out0`` is not modified).
+
+    Batch dims of ``out0``, ``mat`` and ``vec`` are broadcast together.
+    """
+    mat, vec, c = _check_sym(mat, vec)
+    out0 = _as_float_array(out0, "out0", dtype=mat.dtype)
+    if out0.shape[-1] != c:
+        raise ValueError("out0 must have the same channel count as vec")
+    batch, (out_b, mat_b, vec_b) = _broadcast_batch(
+        [(out0, 1), (mat, 1), (vec, 1)]
+    )
+    out = np.array(out_b, dtype=mat.dtype)  # materialise a contiguous buffer
+    _ff.sym_addmatvec_(out, mat_b, vec_b)
     return out
 
 
 def sym_submatvec(out0, mat, vec):
     """``out0 - H @ vec`` (returns a new array; ``out0`` is not modified)."""
-    mat, vec, _ = _check_sym(mat, vec)
-    out = _as_float_array(out0, "out0", dtype=mat.dtype, copy=True)
-    if out.shape != vec.shape:
-        raise ValueError("out0 must have the same shape as vec")
-    _ff.sym_submatvec_(out, mat, vec)
+    mat, vec, c = _check_sym(mat, vec)
+    out0 = _as_float_array(out0, "out0", dtype=mat.dtype)
+    if out0.shape[-1] != c:
+        raise ValueError("out0 must have the same channel count as vec")
+    batch, (out_b, mat_b, vec_b) = _broadcast_batch(
+        [(out0, 1), (mat, 1), (vec, 1)]
+    )
+    out = np.array(out_b, dtype=mat.dtype)  # materialise a contiguous buffer
+    _ff.sym_submatvec_(out, mat_b, vec_b)
     return out
 
 
 def sym_matvec_backward(grad, vec):
     """Backward of :func:`sym_matvec`: gradient w.r.t. the packed matrix.
 
-    ``grad`` and ``vec`` both have trailing dim ``C``; the result has the packed
-    trailing dim ``C*(C+1)/2``.
+    ``grad`` and ``vec`` both have trailing dim ``C`` (batch dims broadcast);
+    the result has the packed trailing dim ``C*(C+1)/2``.
     """
     grad = _as_float_array(grad, "grad")
     vec = _as_float_array(vec, "vec", dtype=grad.dtype)
-    if grad.shape != vec.shape:
-        raise ValueError("grad and vec must have the same shape")
+    if grad.shape[-1] != vec.shape[-1]:
+        raise ValueError("grad and vec must have the same channel count")
     c = grad.shape[-1]
     packed = c * (c + 1) // 2
-    out = np.empty(grad.shape[:-1] + (packed,), dtype=grad.dtype)
-    _ff.sym_matvec_backward(out, grad, vec)
+    batch, (grad_b, vec_b) = _broadcast_batch([(grad, 1), (vec, 1)])
+    out = np.empty(batch + (packed,), dtype=grad.dtype)
+    _ff.sym_matvec_backward(out, grad_b, vec_b)
     return out
 
 
 def sym_solve(mat, vec, weight=None):
     """Solve ``(H + diag(weight)) @ x = vec`` for ``x``.
 
-    ``weight`` (optional) has trailing dim ``C`` matching ``vec``.
+    ``weight`` (optional) has trailing dim ``C`` matching ``vec``.  Batch dims
+    of ``mat``, ``vec`` (and ``weight``) are broadcast together.
     """
     mat, vec, c = _check_sym(mat, vec)
-    out = np.empty_like(vec)
     if weight is None:
-        _ff.sym_solve(out, mat, vec)
+        batch, (mat_b, vec_b) = _broadcast_batch([(mat, 1), (vec, 1)])
+        out = np.empty(batch + (c,), dtype=mat.dtype)
+        _ff.sym_solve(out, mat_b, vec_b)
     else:
         w = _as_float_array(weight, "weight", dtype=mat.dtype)
-        if w.shape[-1] != c or w.shape[:-1] != vec.shape[:-1]:
-            raise ValueError("weight must be broadcastable-shaped like vec")
-        _ff.sym_solve(out, mat, vec, w)
+        if w.shape[-1] != c:
+            raise ValueError("weight must have the same channel count as vec")
+        batch, (mat_b, vec_b, w_b) = _broadcast_batch(
+            [(mat, 1), (vec, 1), (w, 1)]
+        )
+        out = np.empty(batch + (c,), dtype=mat.dtype)
+        _ff.sym_solve(out, mat_b, vec_b, w_b)
     return out
 
 
@@ -406,24 +482,23 @@ def restriction(x, factor=None, shape=None, *, order=2, bound="dct2",
 # distance.h contract but are not otherwise validated here.
 
 
-def _spline_dist_outputs(loc, coeff):
-    loc = _as_float_array(loc, "loc")
-    coeff = _as_float_array(coeff, "coeff", dtype=loc.dtype)
-    batch = loc.shape[:-1]
-    dist = np.empty(batch, dtype=loc.dtype)
-    time = np.empty(batch, dtype=loc.dtype)
-    return loc, coeff, dist, time
-
-
 def spline_distance_table(loc, coeff, times, *, order=3, bound="dct2"):
     """Point-to-spline (squared) distance via a dictionary of candidate times.
 
-    ``loc`` is ``(*B, D)``, ``coeff`` ``(N, D)``, ``times`` ``(K,)``.
-    Returns ``(dist, time)`` each shaped ``(*B,)``.
+    ``loc`` is ``(*B, D)``, ``coeff`` ``(*B, N, D)``, ``times`` ``(*B, K)``.
+    Batch dims of ``loc``/``coeff``/``times`` (core dims ``(D,)``, ``(N, D)``,
+    ``(K,)`` respectively) are broadcast; ``time``/``dist`` are allocated with
+    the broadcast batch shape.  Returns ``(dist, time)`` each shaped ``(*B,)``.
     """
-    loc, coeff, dist, time = _spline_dist_outputs(loc, coeff)
+    loc = _as_float_array(loc, "loc")
+    coeff = _as_float_array(coeff, "coeff", dtype=loc.dtype)
     times = _as_float_array(times, "times", dtype=loc.dtype)
-    _ff.dt_spline_table(time, dist, loc, coeff, times,
+    batch, (loc_b, coeff_b, times_b) = _broadcast_batch(
+        [(loc, 1), (coeff, 2), (times, 1)]
+    )
+    dist = np.empty(batch, dtype=loc.dtype)
+    time = np.empty(batch, dtype=loc.dtype)
+    _ff.dt_spline_table(time, dist, loc_b, coeff_b, times_b,
                         _as_spline(order), _as_bound(bound))
     return dist, time
 
@@ -431,9 +506,15 @@ def spline_distance_table(loc, coeff, times, *, order=3, bound="dct2"):
 def spline_distance_brent(loc, coeff, *, max_iter=64, tol=1e-6, step=0.1,
                           order=3, bound="dct2"):
     """Point-to-spline (squared) distance via Brent's method.
+
+    ``loc`` is ``(*B, D)``, ``coeff`` ``(*B, N, D)``; batch dims broadcast.
     Returns ``(dist, time)``."""
-    loc, coeff, dist, time = _spline_dist_outputs(loc, coeff)
-    _ff.dt_spline_brent(time, dist, loc, coeff, int(max_iter), float(tol),
+    loc = _as_float_array(loc, "loc")
+    coeff = _as_float_array(coeff, "coeff", dtype=loc.dtype)
+    batch, (loc_b, coeff_b) = _broadcast_batch([(loc, 1), (coeff, 2)])
+    dist = np.empty(batch, dtype=loc.dtype)
+    time = np.empty(batch, dtype=loc.dtype)
+    _ff.dt_spline_brent(time, dist, loc_b, coeff_b, int(max_iter), float(tol),
                         float(step), _as_spline(order), _as_bound(bound))
     return dist, time
 
@@ -441,9 +522,15 @@ def spline_distance_brent(loc, coeff, *, max_iter=64, tol=1e-6, step=0.1,
 def spline_distance_gaussnewton(loc, coeff, *, max_iter=64, tol=1e-6,
                                 order=3, bound="dct2"):
     """Point-to-spline (squared) distance via Gauss-Newton.
+
+    ``loc`` is ``(*B, D)``, ``coeff`` ``(*B, N, D)``; batch dims broadcast.
     Returns ``(dist, time)``."""
-    loc, coeff, dist, time = _spline_dist_outputs(loc, coeff)
-    _ff.dt_spline_gaussnewton(time, dist, loc, coeff, int(max_iter),
+    loc = _as_float_array(loc, "loc")
+    coeff = _as_float_array(coeff, "coeff", dtype=loc.dtype)
+    batch, (loc_b, coeff_b) = _broadcast_batch([(loc, 1), (coeff, 2)])
+    dist = np.empty(batch, dtype=loc.dtype)
+    time = np.empty(batch, dtype=loc.dtype)
+    _ff.dt_spline_gaussnewton(time, dist, loc_b, coeff_b, int(max_iter),
                               float(tol), _as_spline(order), _as_bound(bound))
     return dist, time
 
@@ -452,18 +539,23 @@ def mesh_distance(loc, vertices, faces, *, signed=True, naive=False,
                   return_nearest=False):
     """Point-to-triangular-mesh (squared) distance.
 
-    ``loc`` is ``(*B, D)``, ``vertices`` ``(N, D)``, ``faces`` ``(M, D)`` (vertex
-    indices).  Returns ``dist`` of shape ``(*B,)`` (and the nearest-vertex index
-    array when ``return_nearest=True``).
+    ``loc`` is ``(*B, D)``, ``vertices`` ``(*B, N, D)``, ``faces`` ``(*B, M, D)``
+    (vertex indices).  Batch dims (core dims ``(D,)``, ``(N, D)``, ``(M, D)``)
+    are broadcast; ``dist`` (and ``nearest`` if requested) are allocated with
+    the broadcast batch shape.  Returns ``dist`` of shape ``(*B,)`` (and the
+    nearest-vertex index array when ``return_nearest=True``).
     """
     loc = _as_float_array(loc, "loc")
     vertices = _as_float_array(vertices, "vertices", dtype=loc.dtype)
     faces = np.ascontiguousarray(np.asarray(faces, dtype=np.int64))
-    dist = np.empty(loc.shape[:-1], dtype=loc.dtype)
+    batch, (loc_b, vert_b, faces_b) = _broadcast_batch(
+        [(loc, 1), (vertices, 2), (faces, 2)]
+    )
+    dist = np.empty(batch, dtype=loc.dtype)
     nearest = None
     if return_nearest:
-        nearest = np.empty(loc.shape[:-1], dtype=np.int64)
-    _ff.dt_mesh(dist, nearest, loc, vertices, faces,
+        nearest = np.empty(batch, dtype=np.int64)
+    _ff.dt_mesh(dist, nearest, loc_b, vert_b, faces_b,
                 bool(signed), bool(naive))
     if return_nearest:
         return dist, nearest

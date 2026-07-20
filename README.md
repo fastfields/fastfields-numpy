@@ -1,16 +1,16 @@
 # fastfields-numpy
 
 A thin, user-friendly numpy interface over the
-[`fastfields_bind`](../fastfields-bind-py) nanobind bindings.
+[`fastfields.dlpack`](../fastfields-bind-py) nanobind bindings.
 
 The bindings themselves operate *in place* / write through pre-allocated output
-arrays.  `fastfields_numpy` wraps them so that every function accepts numpy
+arrays.  `fastfields.numpy` wraps them so that every function accepts numpy
 arrays and **returns** a freshly allocated numpy array (the input is never
 clobbered unless you pass `inplace=True`).
 
 ```python
 import numpy as np
-import fastfields_numpy as ff
+import fastfields.numpy as ff
 
 x = np.array([0, np.inf, np.inf, 0, np.inf], dtype=np.float32)
 d = ff.euclidean_distance_transform(x)      # squared EDT along the last axis

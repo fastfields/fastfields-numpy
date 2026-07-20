@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-import fastfields_numpy as ff
+import fastfields.numpy as ff
 
 
 # --------------------------------------------------------------------------- #
@@ -152,6 +152,56 @@ def test_sym_invert_then_matvec_is_identity(C):
         col = np.ascontiguousarray(mats[:, :, k])       # H[:,k]
         rec = ff.sym_matvec(inv_packed, col)            # H^-1 @ H[:,k]
         np.testing.assert_allclose(rec, vecs[:, :, k], rtol=1e-5, atol=1e-5)
+
+
+def test_sym_matvec_broadcasts_batch_dims():
+    # hessian batch (1,) vs vec batch (5,): the wrapper must broadcast the
+    # batch dims and produce the manually-broadcast dense result.
+    C, B = 3, 5
+    mats = _random_symmetric(1, C, seed=42)              # batch (1,)
+    packed = _pack_symmetric(mats)                        # (1, 6)
+    vec = np.random.default_rng(7).standard_normal((B, C))  # batch (5,)
+
+    out = ff.sym_matvec(packed, vec)
+    assert out.shape == (B, C)
+    dense = np.broadcast_to(mats, (B, C, C))
+    ref = np.einsum("bij,bj->bi", dense, vec)
+    np.testing.assert_allclose(out, ref, rtol=1e-8, atol=1e-8)
+
+
+def test_sym_matvec_broadcast_is_zero_copy():
+    # The big input must be broadcast as a 0-stride view (no copy). We probe the
+    # wrapper's internal broadcast helper directly to assert zero-copy.
+    from fastfields.numpy import _bcast_view
+
+    big = np.ascontiguousarray(
+        np.random.default_rng(0).standard_normal((1, 6))
+    )
+    view = _bcast_view(big, (100000, 6))
+    assert view.shape == (100000, 6)
+    assert view.strides[0] == 0                 # broadcast axis has 0 stride
+    assert np.shares_memory(view, big)          # no copy of the big input
+    # end-to-end: mismatched batches still zero-copy on the larger operand
+    packed = np.ascontiguousarray(
+        _pack_symmetric(_random_symmetric(1, 2, seed=1))
+    )
+    vec = np.random.default_rng(2).standard_normal((256, 2))
+    out = ff.sym_matvec(packed, vec)
+    assert out.shape == (256, 2)
+
+
+def test_sym_solve_broadcasts_weight():
+    C, B = 3, 4
+    mats = _random_symmetric(1, C, seed=99, posdef=True)   # batch (1,)
+    packed = _pack_symmetric(mats)
+    w = np.abs(np.random.default_rng(1).standard_normal((B, C))) + 0.5  # (4, C)
+    x = np.random.default_rng(2).standard_normal((B, C))
+
+    dense = np.broadcast_to(mats, (B, C, C))
+    b = np.einsum("bij,bj->bi", dense, x) + w * x
+    x_rec = ff.sym_solve(packed, b, weight=w)
+    # the solve accumulates in reduced precision, so loosen tolerance
+    np.testing.assert_allclose(x_rec, x, rtol=1e-4, atol=1e-4)
 
 
 def test_sym_solve_with_weight():
