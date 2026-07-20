@@ -254,3 +254,33 @@ def test_channels_from_packed():
     assert ff.sym_channels_from_packed(6) == 3
     with pytest.raises(ValueError):
         ff.sym_channels_from_packed(4)
+
+
+# --------------------------------------------------------------------------- #
+# in-place on non-contiguous arrays (library is stride-aware -> zero copy)     #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_inplace_noncontiguous(dtype):
+    # A strided (non-contiguous) view of the last axis must be writable in
+    # place: the write lands in the caller's buffer, no contiguous copy.
+    base = np.full((3, 16), np.inf, dtype=dtype)
+    base[:, 0] = 0.0
+    base[:, 8] = 0.0
+    x = base[:, ::2]                       # shape (3, 8), stride 2 (non-contig)
+    assert not x.flags["C_CONTIGUOUS"]
+    ref = np.ascontiguousarray(x)
+    ff.euclidean_distance_transform(ref, inplace=True)
+    ret = ff.euclidean_distance_transform(x, inplace=True)
+    assert ret is x                        # returned the same object
+    assert np.allclose(x, ref)             # correct result on the strided view
+    assert np.allclose(base[:, ::2], ref)  # write landed in the parent buffer
+
+
+def test_inplace_rejects_non_array_and_bad_dtype():
+    with pytest.raises(TypeError):
+        ff.euclidean_distance_transform([0.0, 1.0], inplace=True)  # not ndarray
+    with pytest.raises(TypeError):
+        ff.euclidean_distance_transform(
+            np.zeros(4, dtype=np.int32), inplace=True)             # wrong dtype

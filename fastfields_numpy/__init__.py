@@ -127,6 +127,25 @@ def _as_float_array(x, name, *, dtype=None, copy=False):
     return out
 
 
+def _validate_inplace(x, name="x"):
+    """Validate ``x`` for an in-place op and return it unchanged.
+
+    The underlying library is fully stride-aware (it receives the array's
+    DLPack strides and indexes accordingly), so an in-place call writes
+    directly into ``x`` regardless of its memory layout -- no contiguous copy
+    is made. We therefore accept *any* float32/float64 numpy array here, which
+    keeps in-place ops zero-copy even for non-contiguous views (a core
+    memory-efficiency feature of the library). We only reject non-arrays and
+    wrong dtypes, where an in-place write could not land in the caller's
+    buffer or would need a lossy cast.
+    """
+    if not isinstance(x, np.ndarray):
+        raise TypeError(f"inplace=True requires a numpy ndarray for {name}")
+    if x.dtype not in _FLOAT_DTYPES:
+        raise TypeError(f"inplace=True requires a float32/float64 array for {name}")
+    return x
+
+
 # --------------------------------------------------------------------------- #
 # distance transforms                                                         #
 # --------------------------------------------------------------------------- #
@@ -137,15 +156,11 @@ def euclidean_distance_transform(x, voxel_spacing=1.0, *, inplace=False):
 
     ``x`` must hold ``0`` at feature locations and ``+inf`` elsewhere.
     Returns a new array (unless ``inplace=True``, in which case ``x`` is
-    modified and returned -- it must then already be a contiguous float array).
+    modified and returned -- it must then already be a float32/float64 array;
+    any memory layout is fine, the write is zero-copy via DLPack strides).
     """
     if inplace:
-        if not isinstance(x, np.ndarray):
-            raise TypeError("inplace=True requires a numpy ndarray")
-        if x.dtype not in _FLOAT_DTYPES:
-            raise TypeError("inplace=True requires a float32/float64 array")
-        if not x.flags["C_CONTIGUOUS"]:
-            raise ValueError("inplace=True requires a C-contiguous array")
+        _validate_inplace(x)
         _ff.dt_euclidean(x, float(voxel_spacing))
         return x
     out = _as_float_array(x, "x", copy=True)
@@ -157,12 +172,7 @@ def l1_distance_transform(x, voxel_spacing=1.0, *, inplace=False):
     """L1 distance transform along the **last** axis (see
     :func:`euclidean_distance_transform`)."""
     if inplace:
-        if not isinstance(x, np.ndarray):
-            raise TypeError("inplace=True requires a numpy ndarray")
-        if x.dtype not in _FLOAT_DTYPES:
-            raise TypeError("inplace=True requires a float32/float64 array")
-        if not x.flags["C_CONTIGUOUS"]:
-            raise ValueError("inplace=True requires a C-contiguous array")
+        _validate_inplace(x)
         _ff.dt_l1(x, float(voxel_spacing))
         return x
     out = _as_float_array(x, "x", copy=True)
@@ -293,10 +303,7 @@ def spline_coeff(x, order=3, bound="dct2", *, inplace=False):
     spline = _as_spline(order)
     bnd = _as_bound(bound)
     if inplace:
-        if not isinstance(x, np.ndarray) or x.dtype not in _FLOAT_DTYPES:
-            raise TypeError("inplace=True requires a float32/float64 ndarray")
-        if not x.flags["C_CONTIGUOUS"]:
-            raise ValueError("inplace=True requires a C-contiguous array")
+        _validate_inplace(x)
         _ff.spline_coeff(x, spline, bnd)
         return x
     out = _as_float_array(x, "x", copy=True)
