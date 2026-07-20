@@ -5,7 +5,6 @@ import pytest
 
 import fastfields.numpy as ff
 
-
 # --------------------------------------------------------------------------- #
 # distance transforms                                                         #
 # --------------------------------------------------------------------------- #
@@ -28,8 +27,10 @@ def _dt_reference(inp, voxel_spacing, cost):
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_euclidean_matches_bruteforce(dtype):
     inp = np.array(
-        [[0, np.inf, np.inf, 0, np.inf, np.inf, np.inf],
-         [np.inf, np.inf, 0, np.inf, np.inf, 0, np.inf]],
+        [
+            [0, np.inf, np.inf, 0, np.inf, np.inf, np.inf],
+            [np.inf, np.inf, 0, np.inf, np.inf, 0, np.inf],
+        ],
         dtype=dtype,
     )
     ref = _dt_reference(inp, 1.5, lambda d: d * d)
@@ -42,8 +43,10 @@ def test_euclidean_matches_bruteforce(dtype):
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_l1_matches_bruteforce(dtype):
     inp = np.array(
-        [[0, np.inf, np.inf, 0, np.inf, np.inf, np.inf],
-         [np.inf, np.inf, 0, np.inf, np.inf, 0, np.inf]],
+        [
+            [0, np.inf, np.inf, 0, np.inf, np.inf, np.inf],
+            [np.inf, np.inf, 0, np.inf, np.inf, 0, np.inf],
+        ],
         dtype=dtype,
     )
     ref = _dt_reference(inp, 2.0, lambda d: abs(d))
@@ -55,20 +58,21 @@ def test_dt_handles_noncontiguous_input():
     # Build a strided / transposed (non-C-contiguous) view; the wrapper must
     # copy it into a contiguous buffer and still produce the right answer.
     base = np.array(
-        [[0, np.inf, np.inf, 0, np.inf, np.inf, np.inf],
-         [np.inf, np.inf, 0, np.inf, np.inf, 0, np.inf]],
+        [
+            [0, np.inf, np.inf, 0, np.inf, np.inf, np.inf],
+            [np.inf, np.inf, 0, np.inf, np.inf, 0, np.inf],
+        ],
         dtype=np.float64,
     )
-    strided = base.T.T  # keep shape, but assert we can also feed a real view
-    view = np.asfortranarray(base)          # F-contiguous, not C-contiguous
+    view = np.asfortranarray(base)  # F-contiguous, not C-contiguous
     assert not view.flags["C_CONTIGUOUS"]
     ref = _dt_reference(base, 1.0, lambda d: d * d)
     out = ff.euclidean_distance_transform(view)
     np.testing.assert_allclose(out, ref, rtol=1e-6, atol=1e-6)
 
     # A transposed view of a 3d array (last axis is the strided one).
-    vol = np.stack([base, base + 0.0], axis=0)           # (2,2,7)
-    tview = np.swapaxes(vol, 1, 2)                        # (2,7,2), strided last
+    vol = np.stack([base, base + 0.0], axis=0)  # (2,2,7)
+    tview = np.swapaxes(vol, 1, 2)  # (2,7,2), strided last
     assert not tview.flags["C_CONTIGUOUS"]
     ref_t = _dt_reference(tview.astype(np.float64), 1.0, lambda d: d * d)
     out_t = ff.euclidean_distance_transform(tview)
@@ -149,8 +153,8 @@ def test_sym_invert_then_matvec_is_identity(C):
     # (H^-1) applied to each column of H should give the identity.
     vecs = np.eye(C)[None].repeat(B, axis=0)  # (B, C, C): columns are e_k
     for k in range(C):
-        col = np.ascontiguousarray(mats[:, :, k])       # H[:,k]
-        rec = ff.sym_matvec(inv_packed, col)            # H^-1 @ H[:,k]
+        col = np.ascontiguousarray(mats[:, :, k])  # H[:,k]
+        rec = ff.sym_matvec(inv_packed, col)  # H^-1 @ H[:,k]
         np.testing.assert_allclose(rec, vecs[:, :, k], rtol=1e-5, atol=1e-5)
 
 
@@ -158,8 +162,8 @@ def test_sym_matvec_broadcasts_batch_dims():
     # hessian batch (1,) vs vec batch (5,): the wrapper must broadcast the
     # batch dims and produce the manually-broadcast dense result.
     C, B = 3, 5
-    mats = _random_symmetric(1, C, seed=42)              # batch (1,)
-    packed = _pack_symmetric(mats)                        # (1, 6)
+    mats = _random_symmetric(1, C, seed=42)  # batch (1,)
+    packed = _pack_symmetric(mats)  # (1, 6)
     vec = np.random.default_rng(7).standard_normal((B, C))  # batch (5,)
 
     out = ff.sym_matvec(packed, vec)
@@ -170,17 +174,17 @@ def test_sym_matvec_broadcasts_batch_dims():
 
 
 def test_sym_matvec_broadcast_is_zero_copy():
-    # The big input must be broadcast as a 0-stride view (no copy). We probe the
-    # wrapper's internal broadcast helper directly to assert zero-copy.
-    from fastfields.numpy import _bcast_view
+    # The big input must be broadcast as a 0-stride view (no copy). We probe
+    # the wrapper's internal broadcast helper directly to assert zero-copy.
+    from fastfields.numpy._util import _bcast_view
 
     big = np.ascontiguousarray(
         np.random.default_rng(0).standard_normal((1, 6))
     )
     view = _bcast_view(big, (100000, 6))
     assert view.shape == (100000, 6)
-    assert view.strides[0] == 0                 # broadcast axis has 0 stride
-    assert np.shares_memory(view, big)          # no copy of the big input
+    assert view.strides[0] == 0  # broadcast axis has 0 stride
+    assert np.shares_memory(view, big)  # no copy of the big input
     # end-to-end: mismatched batches still zero-copy on the larger operand
     packed = np.ascontiguousarray(
         _pack_symmetric(_random_symmetric(1, 2, seed=1))
@@ -192,9 +196,11 @@ def test_sym_matvec_broadcast_is_zero_copy():
 
 def test_sym_solve_broadcasts_weight():
     C, B = 3, 4
-    mats = _random_symmetric(1, C, seed=99, posdef=True)   # batch (1,)
+    mats = _random_symmetric(1, C, seed=99, posdef=True)  # batch (1,)
     packed = _pack_symmetric(mats)
-    w = np.abs(np.random.default_rng(1).standard_normal((B, C))) + 0.5  # (4, C)
+    w = (
+        np.abs(np.random.default_rng(1).standard_normal((B, C))) + 0.5
+    )  # (4, C)
     x = np.random.default_rng(2).standard_normal((B, C))
 
     dense = np.broadcast_to(mats, (B, C, C))
@@ -244,7 +250,9 @@ def test_resample_upsample_shape_and_endpoints():
     # factor 2 -> 10 samples; align-corners keeps the endpoints and reproduces
     # the linear ramp over the same [0, 4] extent.
     assert out.shape == (10,)
-    np.testing.assert_allclose(out, np.linspace(0, 4, 10), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        out, np.linspace(0, 4, 10), rtol=1e-6, atol=1e-6
+    )
 
 
 def test_resample_shape_arg():
@@ -306,9 +314,9 @@ def test_channels_from_packed():
         ff.sym_channels_from_packed(4)
 
 
-# --------------------------------------------------------------------------- #
-# in-place on non-contiguous arrays (library is stride-aware -> zero copy)     #
-# --------------------------------------------------------------------------- #
+# ------------------------------------------------------------------------- #
+# in-place on non-contiguous arrays (library is stride-aware -> zero copy)   #
+# ------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
@@ -318,19 +326,22 @@ def test_inplace_noncontiguous(dtype):
     base = np.full((3, 16), np.inf, dtype=dtype)
     base[:, 0] = 0.0
     base[:, 8] = 0.0
-    x = base[:, ::2]                       # shape (3, 8), stride 2 (non-contig)
+    x = base[:, ::2]  # shape (3, 8), stride 2 (non-contig)
     assert not x.flags["C_CONTIGUOUS"]
     ref = np.ascontiguousarray(x)
     ff.euclidean_distance_transform(ref, inplace=True)
     ret = ff.euclidean_distance_transform(x, inplace=True)
-    assert ret is x                        # returned the same object
-    assert np.allclose(x, ref)             # correct result on the strided view
+    assert ret is x  # returned the same object
+    assert np.allclose(x, ref)  # correct result on the strided view
     assert np.allclose(base[:, ::2], ref)  # write landed in the parent buffer
 
 
 def test_inplace_rejects_non_array_and_bad_dtype():
     with pytest.raises(TypeError):
-        ff.euclidean_distance_transform([0.0, 1.0], inplace=True)  # not ndarray
+        ff.euclidean_distance_transform(
+            [0.0, 1.0], inplace=True
+        )  # not ndarray
     with pytest.raises(TypeError):
         ff.euclidean_distance_transform(
-            np.zeros(4, dtype=np.int32), inplace=True)             # wrong dtype
+            np.zeros(4, dtype=np.int32), inplace=True
+        )  # wrong dtype
