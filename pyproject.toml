@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastfields-numpy"
+version = "0.1.0"
+description = "A friendly numpy interface over the fastfields_bind bindings."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "fastfields" }]
+dependencies = [
+    "fastfields-bind",
+    "numpy",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["fastfields_numpy"]
