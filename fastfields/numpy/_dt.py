@@ -19,12 +19,12 @@ from ._util import (
 )
 
 __all__ = [
-    "euclidean_distance_transform",
-    "l1_distance_transform",
-    "spline_distance_table",
-    "spline_distance_brent",
-    "spline_distance_gaussnewton",
-    "mesh_distance",
+    "dt_euclidean",
+    "dt_l1",
+    "dt_spline_table",
+    "dt_spline_brent",
+    "dt_spline_gaussnewton",
+    "dt_mesh",
 ]
 
 
@@ -33,7 +33,7 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 
 
-def euclidean_distance_transform(
+def dt_euclidean(
     x: np.ndarray, voxel_spacing: float = 1.0, *, inplace: bool = False
 ) -> np.ndarray:
     """Squared Euclidean distance transform along the **last** axis.
@@ -63,12 +63,12 @@ def euclidean_distance_transform(
     return out
 
 
-def l1_distance_transform(
+def dt_l1(
     x: np.ndarray, voxel_spacing: float = 1.0, *, inplace: bool = False
 ) -> np.ndarray:
     """L1 distance transform along the **last** axis.
 
-    See :func:`euclidean_distance_transform` for the input convention and the
+    See :func:`dt_euclidean` for the input convention and the
     meaning of the parameters.
 
     Parameters
@@ -104,7 +104,7 @@ def l1_distance_transform(
 # distance.h contract but are not otherwise validated here.
 
 
-def spline_distance_table(
+def dt_spline_table(
     loc: np.ndarray,
     coeff: np.ndarray,
     times: np.ndarray,
@@ -159,7 +159,7 @@ def spline_distance_table(
     return dist, time
 
 
-def spline_distance_brent(
+def dt_spline_brent(
     loc: np.ndarray,
     coeff: np.ndarray,
     *,
@@ -219,7 +219,7 @@ def spline_distance_brent(
     return dist, time
 
 
-def spline_distance_gaussnewton(
+def dt_spline_gaussnewton(
     loc: np.ndarray,
     coeff: np.ndarray,
     *,
@@ -275,7 +275,7 @@ def spline_distance_gaussnewton(
     return dist, time
 
 
-def mesh_distance(
+def dt_mesh(
     loc: np.ndarray,
     vertices: np.ndarray,
     faces: np.ndarray,

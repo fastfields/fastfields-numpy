@@ -34,7 +34,7 @@ def test_euclidean_matches_bruteforce(dtype):
         dtype=dtype,
     )
     ref = _dt_reference(inp, 1.5, lambda d: d * d)
-    out = ff.euclidean_distance_transform(inp, voxel_spacing=1.5)
+    out = ff.dt_euclidean(inp, voxel_spacing=1.5)
     np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
     # input must be untouched (returns a new array)
     assert np.isinf(inp[0, 1])
@@ -50,7 +50,7 @@ def test_l1_matches_bruteforce(dtype):
         dtype=dtype,
     )
     ref = _dt_reference(inp, 2.0, lambda d: abs(d))
-    out = ff.l1_distance_transform(inp, voxel_spacing=2.0)
+    out = ff.dt_l1(inp, voxel_spacing=2.0)
     np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
 
 
@@ -67,7 +67,7 @@ def test_dt_handles_noncontiguous_input():
     view = np.asfortranarray(base)  # F-contiguous, not C-contiguous
     assert not view.flags["C_CONTIGUOUS"]
     ref = _dt_reference(base, 1.0, lambda d: d * d)
-    out = ff.euclidean_distance_transform(view)
+    out = ff.dt_euclidean(view)
     np.testing.assert_allclose(out, ref, rtol=1e-6, atol=1e-6)
 
     # A transposed view of a 3d array (last axis is the strided one).
@@ -75,14 +75,14 @@ def test_dt_handles_noncontiguous_input():
     tview = np.swapaxes(vol, 1, 2)  # (2,7,2), strided last
     assert not tview.flags["C_CONTIGUOUS"]
     ref_t = _dt_reference(tview.astype(np.float64), 1.0, lambda d: d * d)
-    out_t = ff.euclidean_distance_transform(tview)
+    out_t = ff.dt_euclidean(tview)
     np.testing.assert_allclose(out_t, ref_t, rtol=1e-6, atol=1e-6)
 
 
 def test_dt_inplace():
     inp = np.array([[0, np.inf, np.inf, 0, np.inf]], dtype=np.float32)
     ref = _dt_reference(inp, 1.0, lambda d: d * d)
-    ret = ff.euclidean_distance_transform(inp, inplace=True)
+    ret = ff.dt_euclidean(inp, inplace=True)
     assert ret is inp
     np.testing.assert_allclose(inp, ref, rtol=1e-5, atol=1e-5)
 
@@ -329,8 +329,8 @@ def test_inplace_noncontiguous(dtype):
     x = base[:, ::2]  # shape (3, 8), stride 2 (non-contig)
     assert not x.flags["C_CONTIGUOUS"]
     ref = np.ascontiguousarray(x)
-    ff.euclidean_distance_transform(ref, inplace=True)
-    ret = ff.euclidean_distance_transform(x, inplace=True)
+    ff.dt_euclidean(ref, inplace=True)
+    ret = ff.dt_euclidean(x, inplace=True)
     assert ret is x  # returned the same object
     assert np.allclose(x, ref)  # correct result on the strided view
     assert np.allclose(base[:, ::2], ref)  # write landed in the parent buffer
@@ -338,10 +338,8 @@ def test_inplace_noncontiguous(dtype):
 
 def test_inplace_rejects_non_array_and_bad_dtype():
     with pytest.raises(TypeError):
-        ff.euclidean_distance_transform(
-            [0.0, 1.0], inplace=True
-        )  # not ndarray
+        ff.dt_euclidean([0.0, 1.0], inplace=True)  # not ndarray
     with pytest.raises(TypeError):
-        ff.euclidean_distance_transform(
+        ff.dt_euclidean(
             np.zeros(4, dtype=np.int32), inplace=True
         )  # wrong dtype

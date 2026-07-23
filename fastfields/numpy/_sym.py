@@ -20,8 +20,8 @@ __all__ = [
     "sym_channels_from_packed",
     "sym_matvec",
     "sym_matvec_backward",
-    "sym_addmatvec",
-    "sym_submatvec",
+    "sym_addmatvec_",
+    "sym_submatvec_",
     "sym_solve",
     "sym_invert",
 ]
@@ -123,7 +123,7 @@ def sym_matvec(mat: np.ndarray, vec: np.ndarray) -> np.ndarray:
     return out
 
 
-def sym_addmatvec(
+def sym_addmatvec_(
     out0: np.ndarray, mat: np.ndarray, vec: np.ndarray
 ) -> np.ndarray:
     """Compute ``out0 + H @ vec`` (returns a new array; ``out0`` unchanged).
@@ -159,7 +159,7 @@ def sym_addmatvec(
     return out
 
 
-def sym_submatvec(
+def sym_submatvec_(
     out0: np.ndarray, mat: np.ndarray, vec: np.ndarray
 ) -> np.ndarray:
     """Compute ``out0 - H @ vec`` (returns a new array; ``out0`` unchanged).

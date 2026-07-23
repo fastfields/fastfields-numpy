@@ -13,22 +13,22 @@ import numpy as np
 import fastfields.numpy as ff
 
 x = np.array([0, np.inf, np.inf, 0, np.inf], dtype=np.float32)
-d = ff.euclidean_distance_transform(x)      # squared EDT along the last axis
+d = ff.dt_euclidean(x)      # squared EDT along the last axis
 ```
 
 ## Public API
 
 Distance transforms (along the last axis; features are `0`, background `+inf`):
 
-- `euclidean_distance_transform(x, voxel_spacing=1.0, *, inplace=False)`
-- `l1_distance_transform(x, voxel_spacing=1.0, *, inplace=False)`
+- `dt_euclidean(x, voxel_spacing=1.0, *, inplace=False)`
+- `dt_l1(x, voxel_spacing=1.0, *, inplace=False)`
 
 Compact-symmetric linear algebra (packed trailing dim `C*(C+1)/2`,
 diagonal-first then upper rows; `C=2 -> [h00,h11,h01]`,
 `C=3 -> [h00,h11,h22,h01,h02,h12]`):
 
 - `sym_matvec(mat, vec)` -> `H @ vec`
-- `sym_addmatvec(out0, mat, vec)` / `sym_submatvec(out0, mat, vec)`
+- `sym_addmatvec_(out0, mat, vec)` / `sym_submatvec_(out0, mat, vec)`
 - `sym_matvec_backward(grad, vec)`
 - `sym_solve(mat, vec, weight=None)` -> `(H + diag(weight)) \ vec`
 - `sym_invert(mat)` -> packed inverse
@@ -41,10 +41,10 @@ Spline coefficients & resampling:
 
 Point-to-spline / point-to-mesh distance (thin pass-throughs, see caveat below):
 
-- `spline_distance_table(loc, coeff, times, *, order=3, bound='dct2')`
-- `spline_distance_brent(loc, coeff, *, max_iter=64, tol=1e-6, step=0.1, ...)`
-- `spline_distance_gaussnewton(loc, coeff, *, max_iter=64, tol=1e-6, ...)`
-- `mesh_distance(loc, vertices, faces, *, signed=True, naive=False, return_nearest=False)`
+- `dt_spline_table(loc, coeff, times, *, order=3, bound='dct2')`
+- `dt_spline_brent(loc, coeff, *, max_iter=64, tol=1e-6, step=0.1, ...)`
+- `dt_spline_gaussnewton(loc, coeff, *, max_iter=64, tol=1e-6, ...)`
+- `dt_mesh(loc, vertices, faces, *, signed=True, naive=False, return_nearest=False)`
 
 `Spline` and `Bound` enums are re-exported.  Order/bound arguments accept an
 `int`, an enum member, or a friendly string (`"cubic"`, `"dct2"`, ...).

@@ -33,41 +33,41 @@ from __future__ import annotations
 from fastfields.dlpack import Bound, Spline
 
 from ._dt import (
-    euclidean_distance_transform,
-    l1_distance_transform,
-    mesh_distance,
-    spline_distance_brent,
-    spline_distance_gaussnewton,
-    spline_distance_table,
+    dt_euclidean,
+    dt_l1,
+    dt_mesh,
+    dt_spline_brent,
+    dt_spline_gaussnewton,
+    dt_spline_table,
 )
 from ._resample import resample, restriction, spline_coeff
 from ._sym import (
-    sym_addmatvec,
+    sym_addmatvec_,
     sym_channels_from_packed,
     sym_invert,
     sym_matvec,
     sym_matvec_backward,
     sym_solve,
-    sym_submatvec,
+    sym_submatvec_,
 )
 
 __all__ = [
     "Spline",
     "Bound",
-    "euclidean_distance_transform",
-    "l1_distance_transform",
+    "dt_euclidean",
+    "dt_l1",
     "sym_matvec",
     "sym_matvec_backward",
-    "sym_addmatvec",
-    "sym_submatvec",
+    "sym_addmatvec_",
+    "sym_submatvec_",
     "sym_solve",
     "sym_invert",
     "resample",
     "restriction",
     "spline_coeff",
-    "spline_distance_table",
-    "spline_distance_brent",
-    "spline_distance_gaussnewton",
-    "mesh_distance",
+    "dt_spline_table",
+    "dt_spline_brent",
+    "dt_spline_gaussnewton",
+    "dt_mesh",
     "sym_channels_from_packed",
 ]

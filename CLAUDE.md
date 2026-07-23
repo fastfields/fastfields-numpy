@@ -15,11 +15,11 @@ A thin, user-friendly **numpy** interface over the `fastfields.dlpack`
 - Depends only on `fastfields-dlpack` + numpy.
 
 ## Exposed capabilities (feature level)
-- **Distance**: `euclidean_distance_transform`, `l1_distance_transform` (along
-  the last axis); point-to-spline (`spline_distance_{table,brent,gaussnewton}`)
-  and point-to-mesh (`mesh_distance`).
+- **Distance**: `dt_euclidean`, `dt_l1` (along
+  the last axis); point-to-spline (`dt_spline_{table,brent,gaussnewton}`)
+  and point-to-mesh (`dt_mesh`).
 - **Posdef** (compact-symmetric, packed trailing dim): `sym_matvec`,
-  `sym_addmatvec`/`sym_submatvec`, `sym_matvec_backward`, `sym_solve`,
+  `sym_addmatvec_`/`sym_submatvec_`, `sym_matvec_backward`, `sym_solve`,
   `sym_invert`.
 - **Resampling**: `spline_coeff`, `resample`, `restriction`.
 - `Spline`/`Bound` enums re-exported; order/bound args accept int, enum, or a
