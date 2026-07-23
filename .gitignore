@@ -4,3 +4,6 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+
+# versioningit-generated version file
+fastfields/numpy/_version.py
