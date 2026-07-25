@@ -224,6 +224,64 @@ def test_sym_solve_with_weight():
 
 
 # --------------------------------------------------------------------------- #
+# in-place add/sub matvec (C3: trailing-`_` must mutate the caller's array)   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("C", [2, 3])
+def test_sym_addmatvec_mutates_caller_inplace(C):
+    # Regression for fastfields-lib#17 (C3): the trailing-`_` variant must
+    # write through the caller's accumulator, not return a private copy.
+    B = 5
+    mats = _random_symmetric(B, C, seed=C)
+    packed = _pack_symmetric(mats)
+    vec = np.random.default_rng(100 + C).standard_normal((B, C))
+    out0 = np.random.default_rng(200 + C).standard_normal((B, C))
+
+    expected = out0 + np.einsum("bij,bj->bi", mats, vec)
+    ret = ff.sym_addmatvec_(out0, packed, vec)
+    # returned object IS the caller's array, and it was updated in place.
+    assert ret is out0
+    np.testing.assert_allclose(out0, expected, rtol=1e-8, atol=1e-8)
+
+
+@pytest.mark.parametrize("C", [2, 3])
+def test_sym_submatvec_mutates_caller_inplace(C):
+    B = 5
+    mats = _random_symmetric(B, C, seed=C)
+    packed = _pack_symmetric(mats)
+    vec = np.random.default_rng(100 + C).standard_normal((B, C))
+    out0 = np.random.default_rng(200 + C).standard_normal((B, C))
+
+    expected = out0 - np.einsum("bij,bj->bi", mats, vec)
+    ret = ff.sym_submatvec_(out0, packed, vec)
+    assert ret is out0
+    np.testing.assert_allclose(out0, expected, rtol=1e-8, atol=1e-8)
+
+
+def test_sym_addmatvec_broadcasts_onto_accumulator():
+    # out0 fixes the batch shape; mat/vec (batch (1,)) broadcast onto it.
+    C, B = 3, 4
+    mats = _random_symmetric(1, C, seed=11)  # batch (1,)
+    packed = _pack_symmetric(mats)  # (1, 6)
+    vec = np.random.default_rng(3).standard_normal((1, C))  # batch (1,)
+    out0 = np.zeros((B, C))
+
+    ff.sym_addmatvec_(out0, packed, vec)
+    dense = np.broadcast_to(mats, (B, C, C))
+    ref = np.broadcast_to(np.einsum("bij,bj->bi", dense, vec), (B, C))
+    np.testing.assert_allclose(out0, ref, rtol=1e-8, atol=1e-8)
+
+
+def test_sym_addmatvec_channel_mismatch_raises():
+    packed = np.zeros(3)  # encodes C=2
+    vec = np.zeros(3)  # C=3
+    out0 = np.zeros(3)
+    with pytest.raises(ValueError):
+        ff.sym_addmatvec_(out0, packed, vec)
+
+
+# --------------------------------------------------------------------------- #
 # spline coeff / resample                                                     #
 # --------------------------------------------------------------------------- #
 
