@@ -82,9 +82,9 @@ def _check_sym(
     Returns
     -------
     mat : numpy.ndarray
-        Float matrix (native strides preserved).
+        Float matrix, promoted to the common dtype.
     vec : numpy.ndarray
-        Float vector cast to ``mat``'s dtype.
+        Float vector, promoted to the common dtype.
     c : int
         The channel count ``C``.
 
@@ -92,9 +92,20 @@ def _check_sym(
     ------
     ValueError
         If ``vec``'s channel count does not match the matrix packing.
+
+    Notes
+    -----
+    The binding dispatches a single ``scalar_t`` for both operands, so ``mat``
+    and ``vec`` must share a dtype. Rather than silently casting ``vec`` to
+    ``mat``'s dtype (which would drop precision for a float64 ``vec`` against a
+    float32 ``mat``), both are promoted to ``numpy.result_type(mat, vec)`` --
+    the lower-precision operand is upcast, never the reverse.
     """
     mat = _as_float_array(mat, matname)
-    vec = _as_float_array(vec, vecname, dtype=mat.dtype)
+    vec = _as_float_array(vec, vecname)
+    dtype = np.result_type(mat.dtype, vec.dtype)
+    mat = mat.astype(dtype, copy=False)
+    vec = vec.astype(dtype, copy=False)
     c = sym_channels_from_packed(mat.shape[-1])
     if vec.shape[-1] != c:
         raise ValueError(

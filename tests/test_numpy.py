@@ -130,6 +130,23 @@ def test_sym_matvec_matches_dense(C):
     assert out.shape == vec.shape
 
 
+def test_sym_matvec_mixed_dtype_promotes_not_downcasts():
+    # A float32 mat + float64 vec must promote to float64 (upcast the matrix),
+    # never silently downcast the vector -- that would drop precision.
+    C = 3
+    mats = _random_symmetric(4, C, seed=7)
+    packed = _pack_symmetric(mats).astype(np.float32)
+    vec = np.random.default_rng(7).standard_normal((4, C)).astype(np.float64)
+
+    out = ff.sym_matvec(packed, vec)
+    assert out.dtype == np.float64
+    # dense equivalent of the float32-rounded packing, promoted to float64;
+    # the float64 vector keeps its precision through the product.
+    mats32 = mats.astype(np.float32).astype(np.float64)
+    ref = np.einsum("bij,bj->bi", mats32, vec)
+    np.testing.assert_allclose(out, ref, rtol=1e-6, atol=1e-6)
+
+
 @pytest.mark.parametrize("C", [2, 3])
 def test_sym_solve_inverts_matvec(C):
     B = 6
