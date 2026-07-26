@@ -53,13 +53,78 @@ def spline_coeff(
     return out
 
 
-def _resize_shape_scale(
+# torch-interpol anchor conventions (see ``interpol.resize``). Each anchor is
+# identified by its first (lower-cased) letter, so both the full name
+# (``"centers"``) and the abbreviation (``"c"``) are accepted.
+_ANCHORS = ("c", "e", "f", "l")
+# Uniform (dim-independent) sampling shift for the non-centers anchors; the
+# resize kernel offsets the sampling grid by ``shift * (scale[d] - 1)``.
+_ANCHOR_SHIFT = {"e": 0.5, "f": 0.0, "l": 1.0}
+
+
+def _anchor_scale_shift(
+    anchor: str,
+    spatial_in: Sequence[int],
+    spatial_out: Sequence[int],
+) -> tuple[list[float], float]:
+    """Map a torch-interpol ``anchor`` to a per-dim scale and scalar shift.
+
+    The fastfields resize kernel samples input coordinate
+    ``scale[d] * loc[d] + shift * (scale[d] - 1)`` for output index ``loc``.
+    The four anchors of ``interpol.resize`` map onto ``(scale, shift)`` as:
+
+    ==========  =====================  =======
+    anchor      scale[d]               shift
+    ==========  =====================  =======
+    ``centers`` ``(in-1)/(out-1)``     ``0.0``
+    ``edges``   ``in/out``             ``0.5``
+    ``first``   ``in/out``             ``0.0``
+    ``last``    ``in/out``             ``1.0``
+    ==========  =====================  =======
+
+    Parameters
+    ----------
+    anchor : str
+        Anchor name or abbreviation (``centers``/``edges``/``first``/``last``
+        or ``c``/``e``/``f``/``l``); matched case-insensitively on the first
+        letter, mirroring ``interpol.resize``.
+    spatial_in, spatial_out : sequence of int
+        Input and output spatial sizes (length ``ndim``).
+
+    Returns
+    -------
+    scale : list of float
+        Per-dim input-index step per output-index step.
+    shift : float
+        Scalar sampling shift shared across dimensions.
+
+    Raises
+    ------
+    ValueError
+        If ``anchor`` is empty or its first letter is not one of ``c/e/f/l``.
+    """
+    key = str(anchor)[:1].lower()
+    if key not in _ANCHORS:
+        raise ValueError(
+            f"anchor must be one of centers/edges/first/last, got {anchor!r}"
+        )
+    if key == "c":
+        scale = [
+            ((n_in - 1) / (n_out - 1)) if (n_in > 1 and n_out > 1) else 1.0
+            for n_in, n_out in zip(spatial_in, spatial_out)
+        ]
+        return scale, 0.0
+    scale = [n_in / n_out for n_in, n_out in zip(spatial_in, spatial_out)]
+    return scale, _ANCHOR_SHIFT[key]
+
+
+def _resize_shapes(
     in_shape: tuple[int, ...],
     ndim: int,
     factor: float | Sequence[float] | None,
     shape: int | Sequence[int] | None,
-) -> tuple[tuple[int, ...], list[float]]:
-    """Return the output shape and per-dim scale for resample/restriction.
+) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+    """Return the batch, input-spatial, and output-spatial shapes.
 
     Parameters
     ----------
@@ -74,11 +139,12 @@ def _resize_shape_scale(
 
     Returns
     -------
-    out_shape : tuple of int
-        The full output shape (batch dims + spatial dims).
-    scale : list of float
-        Per-dim input-index step per output-index step (align-corners
-        convention ``(in-1)/(out-1)``).
+    batch : tuple of int
+        Leading (non-resized) dimensions.
+    spatial_in : tuple of int
+        Input spatial shape (length ``ndim``).
+    out_spatial : tuple of int
+        Output spatial shape (length ``ndim``).
 
     Raises
     ------
@@ -108,13 +174,7 @@ def _resize_shape_scale(
     else:
         out_spatial = spatial_in  # identity
 
-    scale = []
-    for n_in, n_out in zip(spatial_in, out_spatial):
-        if n_out > 1 and n_in > 1:
-            scale.append((n_in - 1) / (n_out - 1))
-        else:
-            scale.append(1.0)
-    return batch + out_spatial, scale
+    return batch, spatial_in, out_spatial
 
 
 def _infer_ndim(
@@ -158,7 +218,8 @@ def resample(
     order: int | str = 2,
     bound: int | str = "dct2",
     ndim: int | None = None,
-    shift: float = 0.0,
+    anchor: str = "centers",
+    shift: float | None = None,
 ) -> np.ndarray:
     """Spline resample (prolongation) of the last ``ndim`` axes.
 
@@ -177,8 +238,19 @@ def resample(
         Boundary condition.
     ndim : int, optional
         Number of trailing spatial dimensions (inferred when omitted).
-    shift : float, default=0.0
-        Sampling shift.
+    anchor : {"centers", "edges", "first", "last"}, default="centers"
+        Sampling-grid convention, matching ``interpol.resize``. Determines the
+        per-dim scale and the default ``shift``:
+
+        * ``centers`` -- align first/last samples (``(in-1)/(out-1)`` step);
+        * ``edges`` -- align the outer voxel *edges* (half-voxel shift);
+        * ``first`` -- anchor the first voxel (``in/out`` step, no shift);
+        * ``last`` -- anchor the last voxel.
+
+        Abbreviations (``"c"``/``"e"``/``"f"``/``"l"``) are accepted.
+    shift : float, optional
+        Sampling shift override. When omitted the shift implied by ``anchor``
+        is used; pass a value to override it (advanced use).
 
     Returns
     -------
@@ -188,20 +260,23 @@ def resample(
     Raises
     ------
     ValueError
-        If ``ndim`` is outside ``1..x.ndim``.
+        If ``ndim`` is outside ``1..x.ndim`` or ``anchor`` is unknown.
     """
     x = _as_float_array(x, "x")
     ndim = _infer_ndim(ndim, factor, shape, x.ndim)
     if ndim < 1 or ndim > x.ndim:
         raise ValueError(f"ndim must be in 1..{x.ndim}, got {ndim}")
-    out_shape, scale = _resize_shape_scale(x.shape, ndim, factor, shape)
-    out = np.zeros(out_shape, dtype=x.dtype)
+    batch, spatial_in, out_spatial = _resize_shapes(
+        x.shape, ndim, factor, shape
+    )
+    scale, anchor_shift = _anchor_scale_shift(anchor, spatial_in, out_spatial)
+    out = np.zeros(batch + out_spatial, dtype=x.dtype)
     _ff.resample(
         out,
         x,
         spline=_as_spline(order),
         bound=_as_bound(bound),
-        shift=float(shift),
+        shift=anchor_shift if shift is None else float(shift),
         scale=scale,
         ndim=ndim,
     )
@@ -216,11 +291,16 @@ def restriction(
     order: int | str = 2,
     bound: int | str = "dct2",
     ndim: int | None = None,
-    shift: float = 0.0,
+    anchor: str = "centers",
+    shift: float | None = None,
 ) -> np.ndarray:
     """Restriction (adjoint of :func:`resample`) of the last ``ndim`` axes.
 
-    The output buffer is zeroed before the (accumulating) binding call.
+    The output buffer is zeroed before the (accumulating) binding call. The
+    ``anchor`` convention matches :func:`resample`; because the scale is
+    derived from this call's own (input, output) shapes, a ``resample`` and a
+    matching ``restriction`` use reciprocal scales and the same shift -- the
+    adjoint relationship the binding expects.
 
     Parameters
     ----------
@@ -237,8 +317,10 @@ def restriction(
         Boundary condition.
     ndim : int, optional
         Number of trailing spatial dimensions (inferred when omitted).
-    shift : float, default=0.0
-        Sampling shift.
+    anchor : {"centers", "edges", "first", "last"}, default="centers"
+        Sampling-grid convention (see :func:`resample`).
+    shift : float, optional
+        Sampling shift override (see :func:`resample`).
 
     Returns
     -------
@@ -248,20 +330,24 @@ def restriction(
     Raises
     ------
     ValueError
-        If ``ndim`` is outside ``1..x.ndim``.
+        If ``ndim`` is outside ``1..x.ndim`` or ``anchor`` is unknown.
     """
     x = _as_float_array(x, "x")
     ndim = _infer_ndim(ndim, factor, shape, x.ndim)
     if ndim < 1 or ndim > x.ndim:
         raise ValueError(f"ndim must be in 1..{x.ndim}, got {ndim}")
-    out_shape, scale = _resize_shape_scale(x.shape, ndim, factor, shape)
-    out = np.zeros(out_shape, dtype=x.dtype)  # pre-zeroed (accumulated into)
+    batch, spatial_in, out_spatial = _resize_shapes(
+        x.shape, ndim, factor, shape
+    )
+    scale, anchor_shift = _anchor_scale_shift(anchor, spatial_in, out_spatial)
+    # pre-zeroed (the binding accumulates into `out`)
+    out = np.zeros(batch + out_spatial, dtype=x.dtype)
     _ff.restriction(
         out,
         x,
         spline=_as_spline(order),
         bound=_as_bound(bound),
-        shift=float(shift),
+        shift=anchor_shift if shift is None else float(shift),
         scale=scale,
         ndim=ndim,
     )

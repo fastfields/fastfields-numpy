@@ -344,6 +344,73 @@ def test_restriction_runs_and_shapes():
 
 
 # --------------------------------------------------------------------------- #
+# anchor conventions (match interpol.resize)                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_anchor_scale_shift_mapping():
+    from fastfields.numpy._resample import _anchor_scale_shift
+
+    # 8 -> 4 downsample; scale/shift per torch-interpol convention.
+    for name, abbr, exp_scale, exp_shift in [
+        ("centers", "c", 7 / 3, 0.0),
+        ("edges", "e", 2.0, 0.5),
+        ("first", "f", 2.0, 0.0),
+        ("last", "l", 2.0, 1.0),
+    ]:
+        scale, shift = _anchor_scale_shift(name, (8,), (4,))
+        assert shift == exp_shift
+        np.testing.assert_allclose(scale, [exp_scale])
+        # the abbreviation resolves to the same mapping
+        assert _anchor_scale_shift(abbr, (8,), (4,)) == (scale, shift)
+
+
+def test_anchor_unknown_raises():
+    from fastfields.numpy._resample import _anchor_scale_shift
+
+    with pytest.raises(ValueError, match="anchor"):
+        _anchor_scale_shift("nope", (8,), (4,))
+    with pytest.raises(ValueError, match="anchor"):
+        ff.resample(np.arange(8, dtype=np.float64), shape=4, anchor="nope")
+
+
+@pytest.mark.parametrize(
+    "anchor,expected",
+    [
+        # linear interp of the ramp arange(8) reproduces the sampled
+        # input-coordinate; all coords below stay inside [0, 7].
+        ("centers", np.linspace(0, 7, 4)),
+        ("first", [0.0, 2.0, 4.0, 6.0]),
+        ("edges", [0.5, 2.5, 4.5, 6.5]),
+        ("last", [1.0, 3.0, 5.0, 7.0]),
+    ],
+)
+def test_resample_anchor_matches_grid(anchor, expected):
+    x = np.arange(8, dtype=np.float64)
+    out = ff.resample(x, shape=4, order="linear", anchor=anchor)
+    assert out.shape == (4,)
+    np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_resample_default_anchor_is_centers():
+    x = np.arange(8, dtype=np.float64)
+    default = ff.resample(x, shape=4, order="linear")
+    centers = ff.resample(x, shape=4, order="linear", anchor="centers")
+    np.testing.assert_array_equal(default, centers)
+
+
+def test_resample_shift_overrides_anchor():
+    x = np.arange(8, dtype=np.float64)
+    # explicit shift=0 turns 'last' (shift 1) into the 'first' grid (shift 0),
+    # since both use the in/out scale.
+    override = ff.resample(
+        x, shape=4, order="linear", anchor="last", shift=0.0
+    )
+    first = ff.resample(x, shape=4, order="linear", anchor="first")
+    np.testing.assert_allclose(override, first, rtol=1e-6, atol=1e-6)
+
+
+# --------------------------------------------------------------------------- #
 # argument normalisation                                                      #
 # --------------------------------------------------------------------------- #
 
