@@ -399,6 +399,23 @@ def test_resample_default_anchor_is_centers():
     np.testing.assert_array_equal(default, centers)
 
 
+def test_resample_scale_overrides_anchor():
+    # An explicit scale overrides the anchor-derived scale; scale=in/out with
+    # shift=0 reproduces the 'first' grid regardless of the anchor.
+    x = np.arange(8, dtype=np.float64)
+    override = ff.resample(
+        x, shape=4, order="linear", anchor="centers", scale=[2.0], shift=0.0
+    )
+    first = ff.resample(x, shape=4, order="linear", anchor="first")
+    np.testing.assert_allclose(override, first, rtol=1e-6, atol=1e-6)
+
+
+def test_resample_scale_wrong_length_raises():
+    x = np.arange(8, dtype=np.float64)
+    with pytest.raises(ValueError, match="scale"):
+        ff.resample(x, shape=4, ndim=1, scale=[2.0, 2.0])
+
+
 def test_resample_shift_overrides_anchor():
     x = np.arange(8, dtype=np.float64)
     # explicit shift=0 turns 'last' (shift 1) into the 'first' grid (shift 0),

@@ -220,6 +220,7 @@ def resample(
     ndim: int | None = None,
     anchor: str = "centers",
     shift: float | None = None,
+    scale: Sequence[float] | None = None,
 ) -> np.ndarray:
     """Spline resample (prolongation) of the last ``ndim`` axes.
 
@@ -251,6 +252,9 @@ def resample(
     shift : float, optional
         Sampling shift override. When omitted the shift implied by ``anchor``
         is used; pass a value to override it (advanced use).
+    scale : sequence of float, optional
+        Per-dim scale override (default: derived from ``anchor`` and the
+        shapes), length ``ndim``.
 
     Returns
     -------
@@ -269,7 +273,15 @@ def resample(
     batch, spatial_in, out_spatial = _resize_shapes(
         x.shape, ndim, factor, shape
     )
-    scale, anchor_shift = _anchor_scale_shift(anchor, spatial_in, out_spatial)
+    eff_scale, anchor_shift = _anchor_scale_shift(
+        anchor, spatial_in, out_spatial
+    )
+    if scale is not None:
+        eff_scale = [float(s) for s in scale]
+        if len(eff_scale) != ndim:
+            raise ValueError(
+                f"Expected scale of length ndim={ndim}, got {scale}."
+            )
     out = np.zeros(batch + out_spatial, dtype=x.dtype)
     _ff.resample(
         out,
@@ -277,7 +289,7 @@ def resample(
         spline=_as_spline(order),
         bound=_as_bound(bound),
         shift=anchor_shift if shift is None else float(shift),
-        scale=scale,
+        scale=eff_scale,
         ndim=ndim,
     )
     return out
@@ -293,6 +305,7 @@ def restriction(
     ndim: int | None = None,
     anchor: str = "centers",
     shift: float | None = None,
+    scale: Sequence[float] | None = None,
 ) -> np.ndarray:
     """Restriction (adjoint of :func:`resample`) of the last ``ndim`` axes.
 
@@ -321,6 +334,8 @@ def restriction(
         Sampling-grid convention (see :func:`resample`).
     shift : float, optional
         Sampling shift override (see :func:`resample`).
+    scale : sequence of float, optional
+        Per-dim scale override (see :func:`resample`).
 
     Returns
     -------
@@ -339,7 +354,15 @@ def restriction(
     batch, spatial_in, out_spatial = _resize_shapes(
         x.shape, ndim, factor, shape
     )
-    scale, anchor_shift = _anchor_scale_shift(anchor, spatial_in, out_spatial)
+    eff_scale, anchor_shift = _anchor_scale_shift(
+        anchor, spatial_in, out_spatial
+    )
+    if scale is not None:
+        eff_scale = [float(s) for s in scale]
+        if len(eff_scale) != ndim:
+            raise ValueError(
+                f"Expected scale of length ndim={ndim}, got {scale}."
+            )
     # pre-zeroed (the binding accumulates into `out`)
     out = np.zeros(batch + out_spatial, dtype=x.dtype)
     _ff.restriction(
@@ -348,7 +371,7 @@ def restriction(
         spline=_as_spline(order),
         bound=_as_bound(bound),
         shift=anchor_shift if shift is None else float(shift),
-        scale=scale,
+        scale=eff_scale,
         ndim=ndim,
     )
     return out
