@@ -40,6 +40,8 @@ from ._dt import (
     dt_spline_gaussnewton,
     dt_spline_table,
 )
+from ._pushpull import count, grad, pull, push
+from ._reg import field_diag, field_matvec, flow_diag, flow_matvec
 from ._resample import resample, restriction, spline_coeff
 from ._sym import (
     sym_addmatvec_,
@@ -70,4 +72,12 @@ __all__ = [
     "dt_spline_gaussnewton",
     "dt_mesh",
     "sym_channels_from_packed",
+    "pull",
+    "push",
+    "count",
+    "grad",
+    "field_matvec",
+    "field_diag",
+    "flow_matvec",
+    "flow_diag",
 ]

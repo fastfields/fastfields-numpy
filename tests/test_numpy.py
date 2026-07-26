@@ -502,3 +502,70 @@ def test_inplace_rejects_non_array_and_bad_dtype():
         ff.dt_euclidean(
             np.zeros(4, dtype=np.int32), inplace=True
         )  # wrong dtype
+
+
+# --------------------------------------------------------------------------- #
+# pushpull (spline gather / scatter)                                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_pull_linear_interpolation():
+    inp = np.array([[0.0], [10.0], [20.0], [30.0]])  # (4, 1) ramp
+    grid = np.array([[0.5], [1.5], [2.5]])  # (3, 1) between voxels
+    out = ff.pull(inp, grid, order=1)
+    np.testing.assert_allclose(out[:, 0], [5.0, 15.0, 25.0])
+
+
+def test_count_identity_is_ones():
+    grid = np.arange(5.0).reshape(5, 1)
+    np.testing.assert_allclose(ff.count(grid, shape=5, order=1)[:, 0], 1.0)
+
+
+def test_push_is_pull_adjoint():
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((6, 1))
+    y = rng.standard_normal((4, 1))
+    grid = np.linspace(0, 5, 4).reshape(4, 1)
+    px = ff.pull(x, grid, order=2)
+    py = ff.push(y, grid, shape=6, order=2)
+    np.testing.assert_allclose(
+        float((px * y).sum()), float((x * py).sum()), rtol=1e-8, atol=1e-8
+    )
+
+
+def test_grad_of_ramp_is_constant_slope():
+    inp = np.array([[0.0], [10.0], [20.0], [30.0]])
+    grid = np.array([[0.5], [1.5], [2.5]])
+    g = ff.grad(inp, grid, order=1)  # (3, 1, 1)
+    np.testing.assert_allclose(g[:, 0, 0], 10.0)
+
+
+# --------------------------------------------------------------------------- #
+# regularisers                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_field_matvec_absolute_is_per_channel_scaling():
+    rng = np.random.default_rng(1)
+    inp = rng.standard_normal((8, 2))
+    out = ff.field_matvec(inp, absolute=[2.0, 3.0], ndim=1)
+    np.testing.assert_allclose(out[:, 0], 2.0 * inp[:, 0])
+    np.testing.assert_allclose(out[:, 1], 3.0 * inp[:, 1])
+
+
+def test_field_diag_absolute():
+    d = ff.field_diag((8, 2), absolute=2.0, ndim=1)
+    np.testing.assert_allclose(d, 2.0)
+
+
+def test_flow_matvec_absolute_is_scaling():
+    rng = np.random.default_rng(2)
+    inp = rng.standard_normal((8, 1))
+    np.testing.assert_allclose(
+        ff.flow_matvec(inp, absolute=2.5, ndim=1), 2.5 * inp
+    )
+
+
+def test_field_penalty_wrong_length_raises():
+    with pytest.raises(ValueError):
+        ff.field_matvec(np.zeros((4, 2)), absolute=[1.0, 2.0, 3.0], ndim=1)
