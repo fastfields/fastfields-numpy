@@ -349,7 +349,7 @@ def test_restriction_runs_and_shapes():
 
 
 def test_anchor_scale_shift_mapping():
-    from fastfields.numpy._resample import _anchor_scale_shift
+    from fastfields.dlpack import anchor_scale_shift as _anchor_scale_shift
 
     # 8 -> 4 downsample; scale/shift per torch-interpol convention.
     for name, abbr, exp_scale, exp_shift in [
@@ -358,18 +358,18 @@ def test_anchor_scale_shift_mapping():
         ("first", "f", 2.0, 0.0),
         ("last", "l", 2.0, 1.0),
     ]:
-        scale, shift = _anchor_scale_shift(name, (8,), (4,))
+        scale, shift = _anchor_scale_shift(name, (8,), (4,), 1)
         assert shift == exp_shift
         np.testing.assert_allclose(scale, [exp_scale])
         # the abbreviation resolves to the same mapping
-        assert _anchor_scale_shift(abbr, (8,), (4,)) == (scale, shift)
+        assert _anchor_scale_shift(abbr, (8,), (4,), 1) == (scale, shift)
 
 
 def test_anchor_unknown_raises():
-    from fastfields.numpy._resample import _anchor_scale_shift
+    from fastfields.dlpack import anchor_scale_shift as _anchor_scale_shift
 
     with pytest.raises(ValueError, match="anchor"):
-        _anchor_scale_shift("nope", (8,), (4,))
+        _anchor_scale_shift("nope", (8,), (4,), 1)
     with pytest.raises(ValueError, match="anchor"):
         ff.resample(np.arange(8, dtype=np.float64), shape=4, anchor="nope")
 
