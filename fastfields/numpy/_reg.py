@@ -27,6 +27,7 @@ __all__ = [
     "field_diag",
     "flow_matvec",
     "flow_diag",
+    "flow_relax",
 ]
 
 
@@ -124,12 +125,19 @@ def flow_matvec(
     absolute: float = 0.0,
     membrane: float = 0.0,
     bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
     *,
     voxel_size: float | Sequence[float] | None = None,
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Apply the flow regulariser (scalar penalties); same shape as ``inp``."""
+    """Apply the flow regulariser; same shape as ``inp``.
+
+    ``shears`` (Lamé mu) and ``div`` (Lamé lambda) add the linear-elastic
+    penalty, which couples the flow channels; a non-zero value selects the
+    full combined stencil.
+    """
     inp = _as_float_array(inp, "inp")
     out = np.zeros_like(inp)
     _ff.flow_matvec(
@@ -139,6 +147,8 @@ def flow_matvec(
         absolute=float(absolute),
         membrane=float(membrane),
         bending=float(bending),
+        shears=float(shears),
+        div=float(div),
         bound=_as_bound(bound),
         ndim=ndim,
     )
@@ -150,6 +160,8 @@ def flow_diag(
     absolute: float = 0.0,
     membrane: float = 0.0,
     bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
     *,
     voxel_size: float | Sequence[float] | None = None,
     bound: int | str = "dct2",
@@ -164,7 +176,51 @@ def flow_diag(
         absolute=float(absolute),
         membrane=float(membrane),
         bending=float(bending),
+        shears=float(shears),
+        div=float(div),
         bound=_as_bound(bound),
         ndim=ndim,
     )
     return out
+
+
+def flow_relax(
+    flow: np.ndarray,
+    hes: np.ndarray,
+    grd: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+    nb_iter: int = 1,
+) -> np.ndarray:
+    """Refine ``flow`` in place with ``nb_iter`` relaxation sweeps.
+
+    Solves ``(H + L) x = g`` where ``H`` is the per-voxel symmetric Hessian
+    ``hes`` (packed ``ndim*(ndim+1)/2`` last axis), ``L`` the flow regulariser
+    (same penalties as :func:`flow_matvec`), and ``g`` the gradient ``grd``.
+    ``flow`` is the warm start, mutated in place and returned.
+    """
+    flow = _as_float_array(flow, "flow")
+    hes = _as_float_array(hes, "hes")
+    grd = _as_float_array(grd, "grd")
+    _ff.flow_relax(
+        flow,
+        hes,
+        grd,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=float(absolute),
+        membrane=float(membrane),
+        bending=float(bending),
+        shears=float(shears),
+        div=float(div),
+        bound=_as_bound(bound),
+        ndim=ndim,
+        nb_iter=int(nb_iter),
+    )
+    return flow
