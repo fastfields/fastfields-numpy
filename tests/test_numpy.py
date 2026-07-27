@@ -569,3 +569,24 @@ def test_flow_matvec_absolute_is_scaling():
 def test_field_penalty_wrong_length_raises():
     with pytest.raises(ValueError):
         ff.field_matvec(np.zeros((4, 2)), absolute=[1.0, 2.0, 3.0], ndim=1)
+
+
+@pytest.mark.parametrize("bound", ["dct2", "dft"])
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"shears": 1.0},
+        {"div": 1.0},
+        {"absolute": 0.3, "membrane": 0.5, "bending": 0.4,
+         "shears": 1.3, "div": 0.7},
+    ],
+)
+def test_flow_matvec_lame_is_self_adjoint(kw, bound):
+    # The linear-elastic (shears/div) flow operator must be self-adjoint
+    # (SPD) under every boundary, including the reflecting DCT2 case.
+    rng = np.random.default_rng(3)
+    x = rng.standard_normal((5, 6, 2))
+    y = rng.standard_normal((5, 6, 2))
+    lx = ff.flow_matvec(x, ndim=2, bound=bound, **kw)
+    ly = ff.flow_matvec(y, ndim=2, bound=bound, **kw)
+    np.testing.assert_allclose((lx * y).sum(), (x * ly).sum(), rtol=1e-6)

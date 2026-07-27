@@ -124,12 +124,19 @@ def flow_matvec(
     absolute: float = 0.0,
     membrane: float = 0.0,
     bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
     *,
     voxel_size: float | Sequence[float] | None = None,
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Apply the flow regulariser (scalar penalties); same shape as ``inp``."""
+    """Apply the flow regulariser; same shape as ``inp``.
+
+    ``shears`` (Lamé mu) and ``div`` (Lamé lambda) add the linear-elastic
+    penalty, which couples the flow channels; a non-zero value selects the
+    full combined stencil.
+    """
     inp = _as_float_array(inp, "inp")
     out = np.zeros_like(inp)
     _ff.flow_matvec(
@@ -139,6 +146,8 @@ def flow_matvec(
         absolute=float(absolute),
         membrane=float(membrane),
         bending=float(bending),
+        shears=float(shears),
+        div=float(div),
         bound=_as_bound(bound),
         ndim=ndim,
     )
@@ -150,6 +159,8 @@ def flow_diag(
     absolute: float = 0.0,
     membrane: float = 0.0,
     bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
     *,
     voxel_size: float | Sequence[float] | None = None,
     bound: int | str = "dct2",
@@ -164,6 +175,8 @@ def flow_diag(
         absolute=float(absolute),
         membrane=float(membrane),
         bending=float(bending),
+        shears=float(shears),
+        div=float(div),
         bound=_as_bound(bound),
         ndim=ndim,
     )
