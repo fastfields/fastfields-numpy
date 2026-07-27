@@ -715,3 +715,56 @@ def test_flow_diag_accumulate_variants():
     s = base.copy()
     assert ff.flow_diag_sub_(s, **kw) is s
     np.testing.assert_allclose(s, base - d)
+
+
+def _field_hessian(shape_spatial, C, seed):
+    """Per-voxel SPD C×C Hessian, packed compact-symmetric."""
+    n = int(np.prod(shape_spatial))
+    mats = _random_symmetric(n, C, seed, posdef=True)
+    packed = _pack_symmetric(mats)
+    return packed.reshape(*shape_spatial, C * (C + 1) // 2)
+
+
+def test_field_forward_is_sym_matvec_plus_field_matvec():
+    rng = np.random.default_rng(31)
+    H, W, C = 5, 6, 2
+    mat = _field_hessian((H, W), C, 31)
+    vec = rng.standard_normal((H, W, C))
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    fwd = ff.field_forward(mat, vec, **kw)
+    expect = ff.sym_matvec(mat, vec) + ff.field_matvec(vec, **kw)
+    np.testing.assert_allclose(fwd, expect, rtol=1e-6, atol=1e-6)
+
+
+def test_field_precond_solves_diagonal_system():
+    rng = np.random.default_rng(32)
+    H, W, C = 5, 6, 2
+    mat = _field_hessian((H, W), C, 32)
+    vec = rng.standard_normal((H, W, C))
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    x = ff.field_precond(mat, vec, **kw)
+    diag = ff.field_diag(vec.shape, **kw)
+    residual = ff.sym_matvec(mat, x) + diag * x - vec
+    np.testing.assert_allclose(residual, 0.0, atol=1e-5)
+
+
+def test_field_accumulate_variants():
+    rng = np.random.default_rng(33)
+    H, W, C = 5, 6, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    L = ff.field_matvec(field, **kw)
+    d = ff.field_diag(base.shape, **kw)
+    np.testing.assert_allclose(
+        ff.field_matvec_add(base, field, **kw), base + L)
+    np.testing.assert_allclose(
+        ff.field_matvec_sub(base, field, **kw), base - L)
+    np.testing.assert_allclose(ff.field_diag_add(base, **kw), base + d)
+    np.testing.assert_allclose(ff.field_diag_sub(base, **kw), base - d)
+    a = base.copy()
+    assert ff.field_matvec_add_(a, field, **kw) is a
+    np.testing.assert_allclose(a, base + L)
+    s = base.copy()
+    assert ff.field_diag_sub_(s, **kw) is s
+    np.testing.assert_allclose(s, base - d)

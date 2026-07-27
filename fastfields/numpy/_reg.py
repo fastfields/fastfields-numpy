@@ -25,7 +25,17 @@ from ._util import _as_bound, _as_float_array
 
 __all__ = [
     "field_matvec",
+    "field_matvec_add",
+    "field_matvec_add_",
+    "field_matvec_sub",
+    "field_matvec_sub_",
     "field_diag",
+    "field_diag_add",
+    "field_diag_add_",
+    "field_diag_sub",
+    "field_diag_sub_",
+    "field_precond",
+    "field_forward",
     "flow_matvec",
     "flow_matvec_add",
     "flow_matvec_add_",
@@ -510,6 +520,217 @@ def flow_diag_sub_(
     inp = _as_float_array(inp, "inp")
     inp -= flow_diag(
         inp.shape, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+    return inp
+
+
+# --- field: precond / forward / accumulate -------------------------------
+#
+# Field analogues of the flow helpers. ``field_precond`` / ``field_forward``
+# compose the compact-symmetric solve/matvec with the field regulariser; the
+# ``_add`` / ``_sub`` / in-place forms accumulate ``inp ± op(...)``. All are
+# pure Python compositions over field_matvec / field_diag — no new kernel.
+
+
+def field_precond(
+    mat: np.ndarray,
+    vec: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Apply the preconditioner ``(M + diag(R)) \\ vec``.
+
+    ``M`` is the per-voxel compact-symmetric matrix ``mat``; ``diag(R)`` is the
+    (per-channel) diagonal of the field regulariser. A composition of
+    :func:`field_diag` and ``sym_solve`` — no new kernel.
+    """
+    vec = _as_float_array(vec, "vec")
+    diag = field_diag(
+        vec.shape, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=vec.dtype,
+    )
+    return sym_solve(mat, vec, diag)
+
+
+def field_forward(
+    mat: np.ndarray,
+    vec: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Apply the forward matrix-vector product ``(M + R) @ vec``.
+
+    ``M`` is the per-voxel compact-symmetric matrix ``mat`` and ``R`` the field
+    regulariser operator. A composition of ``sym_matvec`` and
+    :func:`field_matvec` — no new kernel.
+    """
+    vec = _as_float_array(vec, "vec")
+    out = sym_matvec(mat, vec)
+    out = out + field_matvec(
+        vec, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+    return out
+
+
+def field_matvec_add(
+    inp: np.ndarray,
+    field: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp + L @ field`` (fresh); ``L`` = field regulariser."""
+    inp = _as_float_array(inp, "inp")
+    return inp + field_matvec(
+        field, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+
+
+def field_matvec_sub(
+    inp: np.ndarray,
+    field: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp - L @ field`` (fresh)."""
+    inp = _as_float_array(inp, "inp")
+    return inp - field_matvec(
+        field, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+
+
+def field_matvec_add_(
+    inp: np.ndarray,
+    field: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp += L @ field`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp += field_matvec(
+        field, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+    return inp
+
+
+def field_matvec_sub_(
+    inp: np.ndarray,
+    field: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp -= L @ field`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp -= field_matvec(
+        field, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+    return inp
+
+
+def field_diag_add(
+    inp: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp + diag(L)`` (fresh), shaped like ``inp``."""
+    inp = _as_float_array(inp, "inp")
+    return inp + field_diag(
+        inp.shape, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+
+
+def field_diag_sub(
+    inp: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp - diag(L)`` (fresh), shaped like ``inp``."""
+    inp = _as_float_array(inp, "inp")
+    return inp - field_diag(
+        inp.shape, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+
+
+def field_diag_add_(
+    inp: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp += diag(L)`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp += field_diag(
+        inp.shape, absolute, membrane, bending,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+    return inp
+
+
+def field_diag_sub_(
+    inp: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp -= diag(L)`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp -= field_diag(
+        inp.shape, absolute, membrane, bending,
         voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
     )
     return inp
