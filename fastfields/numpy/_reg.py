@@ -34,6 +34,7 @@ __all__ = [
     "field_diag_add_",
     "field_diag_sub",
     "field_diag_sub_",
+    "field_kernel",
     "field_precond",
     "field_forward",
     "flow_matvec",
@@ -103,6 +104,64 @@ def field_matvec(
     _ff.field_matvec(
         out,
         inp,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return out
+
+
+def _field_channels(
+    channels: int | None,
+    *penalties: float | Sequence[float] | None,
+) -> int:
+    """Infer the channel count ``C`` from an explicit value or penalty lengths.
+
+    A per-channel penalty passed as a sequence fixes ``C`` (its length); scalar
+    / None penalties broadcast. Defaults to 1 if nothing pins it down.
+    """
+    if channels is not None:
+        return int(channels)
+    for p in penalties:
+        if p is not None and not np.isscalar(p):
+            return len(p)
+    return 1
+
+
+def field_kernel(
+    ndim: int,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    channels: int | None = None,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    dtype: np.dtype = np.float64,
+) -> np.ndarray:
+    """Materialise the field regulariser's per-channel Toeplitz stencil.
+
+    Returns the small centred kernel that, convolved with a field, reproduces
+    :func:`field_matvec`. The shape is ``(*k, C)`` (channels are independent —
+    no cross-channel matrix), where ``k`` is the stencil width per spatial dim:
+    1 (absolute only), 3 (membrane) or 5 (bending). The channel count ``C`` is
+    taken from ``channels`` if given, else inferred from the per-channel
+    penalty lengths (default 1).
+    """
+    ndim = int(ndim)
+    channels = _field_channels(channels, absolute, membrane, bending)
+    if bending is not None:
+        width = 5
+    elif membrane is not None:
+        width = 3
+    else:
+        width = 1
+    out = np.zeros([width] * ndim + [channels], dtype=dtype)
+    _ff.field_kernel(
+        out,
         voxel_size=_voxel_size(voxel_size, ndim),
         absolute=_per_channel(absolute, channels, "absolute"),
         membrane=_per_channel(membrane, channels, "membrane"),
