@@ -622,6 +622,39 @@ def _flow_hessian_2d(H, W, seed):
     return _pack_symmetric(mats).reshape(H, W, 3)
 
 
+@pytest.mark.parametrize(
+    "kw,is_matrix,width",
+    [
+        ({"absolute": 2.5}, False, 1),
+        ({"membrane": 1.0}, False, 3),
+        ({"bending": 1.0}, False, 5),
+        ({"shears": 1.3, "div": 0.7}, True, 3),
+        ({"absolute": 0.3, "membrane": 0.5, "bending": 0.4,
+          "shears": 1.3, "div": 0.7}, True, 5),
+    ],
+)
+def test_flow_kernel_is_matvec_impulse_response(kw, is_matrix, width):
+    # The materialised stencil equals flow_matvec's impulse response in the
+    # interior (translation-invariant there).
+    C = 2
+    K = ff.flow_kernel(2, **kw)
+    assert K.shape == ((width, width, C, C) if is_matrix
+                       else (width, width, C))
+    kd = width
+    N, cc, half = 2 * kd + 1, kd, kd // 2
+    for j0 in range(C):
+        x = np.zeros((N, N, C))
+        x[cc, cc, j0] = 1.0
+        o = ff.flow_matvec(x, ndim=2, **kw)
+        for a in range(kd):
+            for b in range(kd):
+                for i in range(C):
+                    got = o[cc + a - half, cc + b - half, i]
+                    kern = (K[a, b, i, j0] if is_matrix
+                            else (K[a, b, i] if i == j0 else 0.0))
+                    np.testing.assert_allclose(got, kern, atol=1e-10)
+
+
 def test_flow_forward_is_sym_matvec_plus_flow_matvec():
     # (M + R) v == M v + R v, by construction.
     rng = np.random.default_rng(11)
