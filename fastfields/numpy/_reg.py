@@ -27,7 +27,15 @@ __all__ = [
     "field_matvec",
     "field_diag",
     "flow_matvec",
+    "flow_matvec_add",
+    "flow_matvec_add_",
+    "flow_matvec_sub",
+    "flow_matvec_sub_",
     "flow_diag",
+    "flow_diag_add",
+    "flow_diag_add_",
+    "flow_diag_sub",
+    "flow_diag_sub_",
     "flow_kernel",
     "flow_relax",
     "flow_precond",
@@ -329,3 +337,179 @@ def flow_forward(
         voxel_size=voxel_size, bound=bound, ndim=ndim,
     )
     return out
+
+
+# --- accumulate variants -------------------------------------------------
+#
+# jitfields exposes ``_add`` / ``_sub`` (write a fresh array) and trailing-
+# underscore in-place (``_add_`` / ``_sub_``) forms of the flow operator and
+# its diagonal. They are thin compositions over :func:`flow_matvec` /
+# :func:`flow_diag` — ``out = inp ± op(...)`` — so no new kernel is needed.
+
+
+def flow_matvec_add(
+    inp: np.ndarray,
+    flow: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp + L @ flow`` (fresh array); ``L`` = flow regulariser."""
+    inp = _as_float_array(inp, "inp")
+    return inp + flow_matvec(
+        flow, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+
+
+def flow_matvec_sub(
+    inp: np.ndarray,
+    flow: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp - L @ flow`` (fresh array)."""
+    inp = _as_float_array(inp, "inp")
+    return inp - flow_matvec(
+        flow, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+
+
+def flow_matvec_add_(
+    inp: np.ndarray,
+    flow: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp += L @ flow`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp += flow_matvec(
+        flow, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+    return inp
+
+
+def flow_matvec_sub_(
+    inp: np.ndarray,
+    flow: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp -= L @ flow`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp -= flow_matvec(
+        flow, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+    return inp
+
+
+def flow_diag_add(
+    inp: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp + diag(L)`` (fresh array), shaped like ``inp``."""
+    inp = _as_float_array(inp, "inp")
+    return inp + flow_diag(
+        inp.shape, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+
+
+def flow_diag_sub(
+    inp: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Return ``inp - diag(L)`` (fresh array), shaped like ``inp``."""
+    inp = _as_float_array(inp, "inp")
+    return inp - flow_diag(
+        inp.shape, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+
+
+def flow_diag_add_(
+    inp: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp += diag(L)`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp += flow_diag(
+        inp.shape, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+    return inp
+
+
+def flow_diag_sub_(
+    inp: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """In place ``inp -= diag(L)`` (``inp`` a float array); returns it."""
+    inp = _as_float_array(inp, "inp")
+    inp -= flow_diag(
+        inp.shape, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+    )
+    return inp
