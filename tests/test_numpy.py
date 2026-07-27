@@ -768,3 +768,39 @@ def test_field_accumulate_variants():
     s = base.copy()
     assert ff.field_diag_sub_(s, **kw) is s
     np.testing.assert_allclose(s, base - d)
+
+
+@pytest.mark.parametrize(
+    "order,width,kw",
+    [
+        (1, 1, dict(absolute=[2.5, 1.5])),
+        (2, 3, dict(absolute=[0.3, 0.4], membrane=[1.0, 0.7])),
+        (3, 5, dict(absolute=[0.3, 0.4], membrane=[0.5, 0.6],
+                    bending=[1.0, 0.8])),
+    ],
+)
+def test_field_kernel_is_matvec_impulse_response(order, width, kw):
+    # The per-channel field stencil equals field_matvec's impulse response in
+    # the interior (channels are independent).
+    C = 2
+    K = ff.field_kernel(2, **kw)
+    assert K.shape == (width, width, C)
+    kd = width
+    N, cc, half = 2 * kd + 1, kd, kd // 2
+    for c0 in range(C):
+        x = np.zeros((N, N, C))
+        x[cc, cc, c0] = 1.0
+        o = ff.field_matvec(x, ndim=2, **kw)
+        for a in range(kd):
+            for b in range(kd):
+                for c in range(C):
+                    got = o[cc + a - half, cc + b - half, c]
+                    kern = K[a, b, c] if c == c0 else 0.0
+                    np.testing.assert_allclose(got, kern, atol=1e-10)
+
+
+def test_field_kernel_channels_from_penalty_length():
+    # C is inferred from the per-channel penalty length; `channels` overrides.
+    assert ff.field_kernel(2, absolute=[1.0, 2.0, 3.0]).shape == (1, 1, 3)
+    assert ff.field_kernel(1, absolute=2.0, channels=4).shape == (1, 4)
+    assert ff.field_kernel(2, membrane=[1.0]).shape == (3, 3, 1)
