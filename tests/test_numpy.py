@@ -614,3 +614,34 @@ def test_flow_matvec_lame_is_self_adjoint(kw, bound):
     lx = ff.flow_matvec(x, ndim=2, bound=bound, **kw)
     ly = ff.flow_matvec(y, ndim=2, bound=bound, **kw)
     np.testing.assert_allclose((lx * y).sum(), (x * ly).sum(), rtol=1e-6)
+
+
+def _flow_hessian_2d(H, W, seed):
+    """Per-voxel SPD 2x2 Hessian, packed compact-symmetric -> (H, W, 3)."""
+    mats = _random_symmetric(H * W, 2, seed, posdef=True)
+    return _pack_symmetric(mats).reshape(H, W, 3)
+
+
+def test_flow_forward_is_sym_matvec_plus_flow_matvec():
+    # (M + R) v == M v + R v, by construction.
+    rng = np.random.default_rng(11)
+    H, W = 5, 6
+    mat = _flow_hessian_2d(H, W, 11)
+    vec = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5)
+    fwd = ff.flow_forward(mat, vec, ndim=2, **kw)
+    expect = ff.sym_matvec(mat, vec) + ff.flow_matvec(vec, ndim=2, **kw)
+    np.testing.assert_allclose(fwd, expect, rtol=1e-6, atol=1e-6)
+
+
+def test_flow_precond_solves_diagonal_system():
+    # x = (M + diag(R)) \ v  =>  M x + diag(R) x == v.
+    rng = np.random.default_rng(12)
+    H, W = 5, 6
+    mat = _flow_hessian_2d(H, W, 12)
+    vec = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5)
+    x = ff.flow_precond(mat, vec, ndim=2, **kw)
+    diag = ff.flow_diag(vec.shape, ndim=2, **kw)
+    residual = ff.sym_matvec(mat, x) + diag * x - vec
+    np.testing.assert_allclose(residual, 0.0, atol=1e-5)

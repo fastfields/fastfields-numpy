@@ -47,6 +47,8 @@ from ._reg import (
     flow_diag,
     flow_matvec,
     flow_relax,
+    flow_precond,
+    flow_forward,
 )
 from ._resample import resample, restriction, spline_coeff
 from ._sym import (
@@ -87,4 +89,6 @@ __all__ = [
     "flow_matvec",
     "flow_diag",
     "flow_relax",
+    "flow_precond",
+    "flow_forward",
 ]

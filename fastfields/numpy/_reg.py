@@ -20,6 +20,7 @@ import fastfields.dlpack as _ff
 
 import numpy as np
 
+from ._sym import sym_matvec, sym_solve
 from ._util import _as_bound, _as_float_array
 
 __all__ = [
@@ -28,6 +29,8 @@ __all__ = [
     "flow_matvec",
     "flow_diag",
     "flow_relax",
+    "flow_precond",
+    "flow_forward",
 ]
 
 
@@ -224,3 +227,58 @@ def flow_relax(
         nb_iter=int(nb_iter),
     )
     return flow
+
+
+def flow_precond(
+    mat: np.ndarray,
+    vec: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Apply the preconditioner ``(M + diag(R)) \\ vec``.
+
+    ``M`` is the per-voxel compact-symmetric matrix ``mat``; ``diag(R)`` is the
+    diagonal of the flow regulariser (same penalties as :func:`flow_matvec`).
+    A composition of :func:`flow_diag` and ``sym_solve`` — no new kernel.
+    """
+    vec = _as_float_array(vec, "vec")
+    diag = flow_diag(
+        vec.shape, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=vec.dtype,
+    )
+    return sym_solve(mat, vec, diag)
+
+
+def flow_forward(
+    mat: np.ndarray,
+    vec: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """Apply the forward matrix-vector product ``(M + R) @ vec``.
+
+    ``M`` is the per-voxel compact-symmetric matrix ``mat`` and ``R`` the flow
+    regulariser operator. A composition of ``sym_matvec`` and
+    :func:`flow_matvec` — no new kernel.
+    """
+    vec = _as_float_array(vec, "vec")
+    out = sym_matvec(mat, vec)
+    out = out + flow_matvec(
+        vec, absolute, membrane, bending, shears, div,
+        voxel_size=voxel_size, bound=bound, ndim=ndim,
+    )
+    return out
