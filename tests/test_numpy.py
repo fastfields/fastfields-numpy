@@ -571,6 +571,30 @@ def test_field_penalty_wrong_length_raises():
         ff.field_matvec(np.zeros((4, 2)), absolute=[1.0, 2.0, 3.0], ndim=1)
 
 
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"membrane": 1.0},
+        {"shears": 1.0, "div": 0.5},
+        {"absolute": 0.3, "membrane": 0.7, "bending": 0.4,
+         "shears": 1.0, "div": 0.5},
+    ],
+)
+def test_flow_relax_solves_system(kw):
+    # relaxation drives (H + L) x -> g; with a strong diagonal Hessian the
+    # Gauss-Seidel sweeps converge. Residual recomputes L x via flow_matvec.
+    rng = np.random.default_rng(4)
+    H, W, hdiag = 6, 7, 6.0
+    hes = np.zeros((H, W, 3))
+    hes[..., 0] = hdiag
+    hes[..., 1] = hdiag
+    grd = rng.standard_normal((H, W, 2))
+    x = ff.flow_relax(np.zeros((H, W, 2)), hes, grd, ndim=2, nb_iter=150, **kw)
+    lx = ff.flow_matvec(x, ndim=2, **kw)
+    rel = np.linalg.norm(hdiag * x + lx - grd) / np.linalg.norm(grd)
+    assert rel < 3e-3
+
+
 @pytest.mark.parametrize("bound", ["dct2", "dft"])
 @pytest.mark.parametrize(
     "kw",
