@@ -678,3 +678,40 @@ def test_flow_precond_solves_diagonal_system():
     diag = ff.flow_diag(vec.shape, ndim=2, **kw)
     residual = ff.sym_matvec(mat, x) + diag * x - vec
     np.testing.assert_allclose(residual, 0.0, atol=1e-5)
+
+
+def test_flow_matvec_accumulate_variants():
+    rng = np.random.default_rng(21)
+    H, W = 5, 6
+    flow = rng.standard_normal((H, W, 2))
+    base = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+    L = ff.flow_matvec(flow, **kw)
+    # fresh-array forms
+    np.testing.assert_allclose(ff.flow_matvec_add(base, flow, **kw), base + L)
+    np.testing.assert_allclose(ff.flow_matvec_sub(base, flow, **kw), base - L)
+    # in-place forms mutate and return the same array
+    a = base.copy()
+    r = ff.flow_matvec_add_(a, flow, **kw)
+    assert r is a
+    np.testing.assert_allclose(a, base + L)
+    s = base.copy()
+    r = ff.flow_matvec_sub_(s, flow, **kw)
+    assert r is s
+    np.testing.assert_allclose(s, base - L)
+
+
+def test_flow_diag_accumulate_variants():
+    rng = np.random.default_rng(22)
+    H, W = 5, 6
+    base = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+    d = ff.flow_diag(base.shape, **kw)
+    np.testing.assert_allclose(ff.flow_diag_add(base, **kw), base + d)
+    np.testing.assert_allclose(ff.flow_diag_sub(base, **kw), base - d)
+    a = base.copy()
+    assert ff.flow_diag_add_(a, **kw) is a
+    np.testing.assert_allclose(a, base + d)
+    s = base.copy()
+    assert ff.flow_diag_sub_(s, **kw) is s
+    np.testing.assert_allclose(s, base - d)
