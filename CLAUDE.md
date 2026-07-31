@@ -1,10 +1,10 @@
 # fastfields-numpy  (imports as `fastfields.numpy`)
 
 A thin, user-friendly **numpy** interface over the `fastfields.dlpack`
-(`fastfields-bind-py`) bindings.
+bindings.
 
 ```
-… ─ lib ─ bind-py ─ numpy ← (you are here) … ─ fastfields
+… ─ lib ─ dlpack ─ numpy ← (you are here) … ─ fastfields
 ```
 
 ## Philosophy / role

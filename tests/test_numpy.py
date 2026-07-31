@@ -576,8 +576,13 @@ def test_field_penalty_wrong_length_raises():
     [
         {"membrane": 1.0},
         {"shears": 1.0, "div": 0.5},
-        {"absolute": 0.3, "membrane": 0.7, "bending": 0.4,
-         "shears": 1.0, "div": 0.5},
+        {
+            "absolute": 0.3,
+            "membrane": 0.7,
+            "bending": 0.4,
+            "shears": 1.0,
+            "div": 0.5,
+        },
     ],
 )
 def test_flow_relax_solves_system(kw):
@@ -601,8 +606,13 @@ def test_flow_relax_solves_system(kw):
     [
         {"shears": 1.0},
         {"div": 1.0},
-        {"absolute": 0.3, "membrane": 0.5, "bending": 0.4,
-         "shears": 1.3, "div": 0.7},
+        {
+            "absolute": 0.3,
+            "membrane": 0.5,
+            "bending": 0.4,
+            "shears": 1.3,
+            "div": 0.7,
+        },
     ],
 )
 def test_flow_matvec_lame_is_self_adjoint(kw, bound):
@@ -629,8 +639,17 @@ def _flow_hessian_2d(H, W, seed):
         ({"membrane": 1.0}, False, 3),
         ({"bending": 1.0}, False, 5),
         ({"shears": 1.3, "div": 0.7}, True, 3),
-        ({"absolute": 0.3, "membrane": 0.5, "bending": 0.4,
-          "shears": 1.3, "div": 0.7}, True, 5),
+        (
+            {
+                "absolute": 0.3,
+                "membrane": 0.5,
+                "bending": 0.4,
+                "shears": 1.3,
+                "div": 0.7,
+            },
+            True,
+            5,
+        ),
     ],
 )
 def test_flow_kernel_is_matvec_impulse_response(kw, is_matrix, width):
@@ -638,8 +657,9 @@ def test_flow_kernel_is_matvec_impulse_response(kw, is_matrix, width):
     # interior (translation-invariant there).
     C = 2
     K = ff.flow_kernel(2, **kw)
-    assert K.shape == ((width, width, C, C) if is_matrix
-                       else (width, width, C))
+    assert K.shape == (
+        (width, width, C, C) if is_matrix else (width, width, C)
+    )
     kd = width
     N, cc, half = 2 * kd + 1, kd, kd // 2
     for j0 in range(C):
@@ -650,8 +670,11 @@ def test_flow_kernel_is_matvec_impulse_response(kw, is_matrix, width):
             for b in range(kd):
                 for i in range(C):
                     got = o[cc + a - half, cc + b - half, i]
-                    kern = (K[a, b, i, j0] if is_matrix
-                            else (K[a, b, i] if i == j0 else 0.0))
+                    kern = (
+                        K[a, b, i, j0]
+                        if is_matrix
+                        else (K[a, b, i] if i == j0 else 0.0)
+                    )
                     np.testing.assert_allclose(got, kern, atol=1e-10)
 
 
@@ -757,9 +780,11 @@ def test_field_accumulate_variants():
     L = ff.field_matvec(field, **kw)
     d = ff.field_diag(base.shape, **kw)
     np.testing.assert_allclose(
-        ff.field_matvec_add(base, field, **kw), base + L)
+        ff.field_matvec_add(base, field, **kw), base + L
+    )
     np.testing.assert_allclose(
-        ff.field_matvec_sub(base, field, **kw), base - L)
+        ff.field_matvec_sub(base, field, **kw), base - L
+    )
     np.testing.assert_allclose(ff.field_diag_add(base, **kw), base + d)
     np.testing.assert_allclose(ff.field_diag_sub(base, **kw), base - d)
     a = base.copy()
@@ -775,8 +800,11 @@ def test_field_accumulate_variants():
     [
         (1, 1, dict(absolute=[2.5, 1.5])),
         (2, 3, dict(absolute=[0.3, 0.4], membrane=[1.0, 0.7])),
-        (3, 5, dict(absolute=[0.3, 0.4], membrane=[0.5, 0.6],
-                    bending=[1.0, 0.8])),
+        (
+            3,
+            5,
+            dict(absolute=[0.3, 0.4], membrane=[0.5, 0.6], bending=[1.0, 0.8]),
+        ),
     ],
 )
 def test_field_kernel_is_matvec_impulse_response(order, width, kw):
