@@ -374,8 +374,16 @@ def flow_precond(
     """
     vec = _as_float_array(vec, "vec")
     diag = flow_diag(
-        vec.shape, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=vec.dtype,
+        vec.shape,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=vec.dtype,
     )
     return sym_solve(mat, vec, diag)
 
@@ -402,8 +410,15 @@ def flow_forward(
     vec = _as_float_array(vec, "vec")
     out = sym_matvec(mat, vec)
     out = out + flow_matvec(
-        vec, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        vec,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
     return out
 
@@ -432,8 +447,15 @@ def flow_matvec_add(
     """Return ``inp + L @ flow`` (fresh array); ``L`` = flow regulariser."""
     inp = _as_float_array(inp, "inp")
     return inp + flow_matvec(
-        flow, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        flow,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
 
 
@@ -453,8 +475,15 @@ def flow_matvec_sub(
     """Return ``inp - L @ flow`` (fresh array)."""
     inp = _as_float_array(inp, "inp")
     return inp - flow_matvec(
-        flow, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        flow,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
 
 
@@ -474,8 +503,15 @@ def flow_matvec_add_(
     """In place ``inp += L @ flow`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp += flow_matvec(
-        flow, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        flow,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
     return inp
 
@@ -496,8 +532,15 @@ def flow_matvec_sub_(
     """In place ``inp -= L @ flow`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp -= flow_matvec(
-        flow, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        flow,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
     return inp
 
@@ -517,8 +560,16 @@ def flow_diag_add(
     """Return ``inp + diag(L)`` (fresh array), shaped like ``inp``."""
     inp = _as_float_array(inp, "inp")
     return inp + flow_diag(
-        inp.shape, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
 
 
@@ -537,8 +588,16 @@ def flow_diag_sub(
     """Return ``inp - diag(L)`` (fresh array), shaped like ``inp``."""
     inp = _as_float_array(inp, "inp")
     return inp - flow_diag(
-        inp.shape, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
 
 
@@ -557,8 +616,16 @@ def flow_diag_add_(
     """In place ``inp += diag(L)`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp += flow_diag(
-        inp.shape, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
     return inp
 
@@ -578,8 +645,16 @@ def flow_diag_sub_(
     """In place ``inp -= diag(L)`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp -= flow_diag(
-        inp.shape, absolute, membrane, bending, shears, div,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        shears,
+        div,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
     return inp
 
@@ -611,8 +686,14 @@ def field_precond(
     """
     vec = _as_float_array(vec, "vec")
     diag = field_diag(
-        vec.shape, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=vec.dtype,
+        vec.shape,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=vec.dtype,
     )
     return sym_solve(mat, vec, diag)
 
@@ -637,8 +718,13 @@ def field_forward(
     vec = _as_float_array(vec, "vec")
     out = sym_matvec(mat, vec)
     out = out + field_matvec(
-        vec, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        vec,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
     return out
 
@@ -657,8 +743,13 @@ def field_matvec_add(
     """Return ``inp + L @ field`` (fresh); ``L`` = field regulariser."""
     inp = _as_float_array(inp, "inp")
     return inp + field_matvec(
-        field, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        field,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
 
 
@@ -676,8 +767,13 @@ def field_matvec_sub(
     """Return ``inp - L @ field`` (fresh)."""
     inp = _as_float_array(inp, "inp")
     return inp - field_matvec(
-        field, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        field,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
 
 
@@ -695,8 +791,13 @@ def field_matvec_add_(
     """In place ``inp += L @ field`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp += field_matvec(
-        field, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        field,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
     return inp
 
@@ -715,8 +816,13 @@ def field_matvec_sub_(
     """In place ``inp -= L @ field`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp -= field_matvec(
-        field, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim,
+        field,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
     )
     return inp
 
@@ -734,8 +840,14 @@ def field_diag_add(
     """Return ``inp + diag(L)`` (fresh), shaped like ``inp``."""
     inp = _as_float_array(inp, "inp")
     return inp + field_diag(
-        inp.shape, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
 
 
@@ -752,8 +864,14 @@ def field_diag_sub(
     """Return ``inp - diag(L)`` (fresh), shaped like ``inp``."""
     inp = _as_float_array(inp, "inp")
     return inp - field_diag(
-        inp.shape, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
 
 
@@ -770,8 +888,14 @@ def field_diag_add_(
     """In place ``inp += diag(L)`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp += field_diag(
-        inp.shape, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
     return inp
 
@@ -789,7 +913,13 @@ def field_diag_sub_(
     """In place ``inp -= diag(L)`` (``inp`` a float array); returns it."""
     inp = _as_float_array(inp, "inp")
     inp -= field_diag(
-        inp.shape, absolute, membrane, bending,
-        voxel_size=voxel_size, bound=bound, ndim=ndim, dtype=inp.dtype,
+        inp.shape,
+        absolute,
+        membrane,
+        bending,
+        voxel_size=voxel_size,
+        bound=bound,
+        ndim=ndim,
+        dtype=inp.dtype,
     )
     return inp
