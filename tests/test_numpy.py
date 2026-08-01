@@ -779,12 +779,8 @@ def test_field_accumulate_variants():
     kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
     L = ff.field_matvec(field, **kw)
     d = ff.field_diag(base.shape, **kw)
-    np.testing.assert_allclose(
-        ff.field_addmatvec(base, field, **kw), base + L
-    )
-    np.testing.assert_allclose(
-        ff.field_submatvec(base, field, **kw), base - L
-    )
+    np.testing.assert_allclose(ff.field_addmatvec(base, field, **kw), base + L)
+    np.testing.assert_allclose(ff.field_submatvec(base, field, **kw), base - L)
     np.testing.assert_allclose(ff.field_adddiag(base, **kw), base + d)
     np.testing.assert_allclose(ff.field_subdiag(base, **kw), base - d)
     a = base.copy()
@@ -912,13 +908,15 @@ def test_accumulate_matches_reference_composition():
     base = rng.standard_normal((H, W, C))
     L = ff.field_matvec(field, **_ACC_FIELD_KW)
     np.testing.assert_allclose(
-        ff.field_addmatvec(base, field, **_ACC_FIELD_KW), base + L,
-        atol=1e-12)
+        ff.field_addmatvec(base, field, **_ACC_FIELD_KW), base + L, atol=1e-12
+    )
     np.testing.assert_allclose(
-        ff.field_submatvec(base, field, **_ACC_FIELD_KW), base - L,
-        atol=1e-12)
+        ff.field_submatvec(base, field, **_ACC_FIELD_KW), base - L, atol=1e-12
+    )
     d = ff.field_diag(base.shape, **_ACC_FIELD_KW)
     np.testing.assert_allclose(
-        ff.field_adddiag(base, **_ACC_FIELD_KW), base + d, atol=1e-12)
+        ff.field_adddiag(base, **_ACC_FIELD_KW), base + d, atol=1e-12
+    )
     np.testing.assert_allclose(
-        ff.field_subdiag(base, **_ACC_FIELD_KW), base - d, atol=1e-12)
+        ff.field_subdiag(base, **_ACC_FIELD_KW), base - d, atol=1e-12
+    )
