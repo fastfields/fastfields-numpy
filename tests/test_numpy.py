@@ -832,3 +832,93 @@ def test_field_kernel_channels_from_penalty_length():
     assert ff.field_kernel(2, absolute=[1.0, 2.0, 3.0]).shape == (1, 1, 3)
     assert ff.field_kernel(1, absolute=2.0, channels=4).shape == (1, 4)
     assert ff.field_kernel(2, membrane=[1.0]).shape == (3, 3, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Accumulate ops: one in-place kernel, two spellings                          #
+#                                                                             #
+# The C primitive is in-place only; the out-of-place spelling copies first and#
+# runs the same primitive. These tests pin both halves of that contract.      #
+# --------------------------------------------------------------------------- #
+
+
+_ACC_FIELD_KW = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+_ACC_FLOW_KW = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+
+
+def test_out_of_place_accumulate_does_not_mutate_input():
+    rng = np.random.default_rng(11)
+    H, W, C = 4, 5, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    before = base.copy()
+    for fn in (ff.field_matvec_add, ff.field_matvec_sub):
+        out = fn(base, field, **_ACC_FIELD_KW)
+        np.testing.assert_array_equal(base, before)
+        assert out is not base
+    for fn in (ff.field_diag_add, ff.field_diag_sub):
+        out = fn(base, **_ACC_FIELD_KW)
+        np.testing.assert_array_equal(base, before)
+        assert out is not base
+
+
+def test_inplace_accumulate_mutates_and_returns_same_array():
+    rng = np.random.default_rng(12)
+    H, W, C = 4, 5, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    a = base.copy()
+    assert ff.field_matvec_add_(a, field, **_ACC_FIELD_KW) is a
+    assert not np.array_equal(a, base)
+
+
+def test_inplace_and_out_of_place_agree_field():
+    rng = np.random.default_rng(13)
+    H, W, C = 4, 5, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    a = base.copy()
+    ff.field_matvec_add_(a, field, **_ACC_FIELD_KW)
+    b = ff.field_matvec_add(base, field, **_ACC_FIELD_KW)
+    np.testing.assert_array_equal(a, b)
+
+    a = base.copy()
+    ff.field_diag_sub_(a, **_ACC_FIELD_KW)
+    b = ff.field_diag_sub(base, **_ACC_FIELD_KW)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_inplace_and_out_of_place_agree_flow():
+    rng = np.random.default_rng(14)
+    H, W = 5, 6
+    flow = rng.standard_normal((H, W, 2))
+    base = rng.standard_normal((H, W, 2))
+    a = base.copy()
+    ff.flow_matvec_sub_(a, flow, **_ACC_FLOW_KW)
+    b = ff.flow_matvec_sub(base, flow, **_ACC_FLOW_KW)
+    np.testing.assert_array_equal(a, b)
+
+    a = base.copy()
+    ff.flow_diag_add_(a, **_ACC_FLOW_KW)
+    b = ff.flow_diag_add(base, **_ACC_FLOW_KW)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_accumulate_matches_reference_composition():
+    """The fused primitive must equal the naive `base +/- L(x)` composition."""
+    rng = np.random.default_rng(15)
+    H, W, C = 5, 6, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    L = ff.field_matvec(field, **_ACC_FIELD_KW)
+    np.testing.assert_allclose(
+        ff.field_matvec_add(base, field, **_ACC_FIELD_KW), base + L,
+        atol=1e-12)
+    np.testing.assert_allclose(
+        ff.field_matvec_sub(base, field, **_ACC_FIELD_KW), base - L,
+        atol=1e-12)
+    d = ff.field_diag(base.shape, **_ACC_FIELD_KW)
+    np.testing.assert_allclose(
+        ff.field_diag_add(base, **_ACC_FIELD_KW), base + d, atol=1e-12)
+    np.testing.assert_allclose(
+        ff.field_diag_sub(base, **_ACC_FIELD_KW), base - d, atol=1e-12)
