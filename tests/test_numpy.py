@@ -771,6 +771,46 @@ def test_field_precond_solves_diagonal_system():
     np.testing.assert_allclose(residual, 0.0, atol=1e-5)
 
 
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"membrane": [1.0, 0.8]},
+        {"absolute": [0.3, 0.4], "membrane": [0.7, 0.5]},
+        {
+            "absolute": [0.3, 0.4],
+            "membrane": [0.7, 0.5],
+            "bending": [0.4, 0.2],
+        },
+    ],
+)
+def test_field_relax_solves_system(kw):
+    # relaxation drives (H + L) x -> g; with a strong diagonal Hessian the
+    # Gauss-Seidel sweeps converge. Residual recomputes L x via field_matvec,
+    # mirroring test_flow_relax_solves_system.
+    rng = np.random.default_rng(34)
+    H, W, C, hdiag = 6, 7, 2, 6.0
+    hes = np.zeros((H, W, C * (C + 1) // 2))
+    hes[..., 0] = hdiag
+    hes[..., 1] = hdiag
+    grd = rng.standard_normal((H, W, C))
+    x = ff.field_relax(
+        np.zeros((H, W, C)), hes, grd, ndim=2, nb_iter=250, **kw
+    )
+    lx = ff.field_matvec(x, ndim=2, **kw)
+    rel = np.linalg.norm(hdiag * x + lx - grd) / np.linalg.norm(grd)
+    assert rel < 3e-3
+
+
+def test_field_relax_is_in_place():
+    # `field_relax` mutates and returns its first argument, as flow_relax does.
+    sol = np.zeros((6, 6, 2))
+    hes = _field_hessian((6, 6), 2, 35)
+    grd = np.ones((6, 6, 2))
+    out = ff.field_relax(sol, hes, grd, membrane=1.0, ndim=2, nb_iter=4)
+    assert out is sol
+    assert np.any(sol != 0.0)
+
+
 def test_field_accumulate_variants():
     rng = np.random.default_rng(33)
     H, W, C = 5, 6, 2
