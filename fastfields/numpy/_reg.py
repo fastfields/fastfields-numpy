@@ -25,28 +25,28 @@ from ._util import _as_bound, _as_float_array
 
 __all__ = [
     "field_matvec",
-    "field_matvec_add",
-    "field_matvec_add_",
-    "field_matvec_sub",
-    "field_matvec_sub_",
+    "field_addmatvec",
+    "field_addmatvec_",
+    "field_submatvec",
+    "field_submatvec_",
     "field_diag",
-    "field_diag_add",
-    "field_diag_add_",
-    "field_diag_sub",
-    "field_diag_sub_",
+    "field_adddiag",
+    "field_adddiag_",
+    "field_subdiag",
+    "field_subdiag_",
     "field_kernel",
     "field_precond",
     "field_forward",
     "flow_matvec",
-    "flow_matvec_add",
-    "flow_matvec_add_",
-    "flow_matvec_sub",
-    "flow_matvec_sub_",
+    "flow_addmatvec",
+    "flow_addmatvec_",
+    "flow_submatvec",
+    "flow_submatvec_",
     "flow_diag",
-    "flow_diag_add",
-    "flow_diag_add_",
-    "flow_diag_sub",
-    "flow_diag_sub_",
+    "flow_adddiag",
+    "flow_adddiag_",
+    "flow_subdiag",
+    "flow_subdiag_",
     "flow_kernel",
     "flow_relax",
     "flow_precond",
@@ -105,7 +105,7 @@ def _field_matvec_acc(inp, field, absolute, membrane, bending, voxel_size,
     field = _as_float_array(field, "field")
     acc = inp if inplace else inp.copy()
     channels = field.shape[-1]
-    fn = _ff.field_matvec_sub_ if sub else _ff.field_matvec_add_
+    fn = _ff.field_submatvec_ if sub else _ff.field_addmatvec_
     fn(
         acc,
         field,
@@ -124,7 +124,7 @@ def _field_diag_acc(inp, absolute, membrane, bending, voxel_size, bound, ndim,
     inp = _as_float_array(inp, "inp")
     acc = inp if inplace else inp.copy()
     channels = acc.shape[-1]
-    fn = _ff.field_diag_sub_ if sub else _ff.field_diag_add_
+    fn = _ff.field_subdiag_ if sub else _ff.field_adddiag_
     fn(
         acc,
         voxel_size=_voxel_size(voxel_size, ndim),
@@ -142,7 +142,7 @@ def _flow_matvec_acc(inp, flow, absolute, membrane, bending, shears, div,
     inp = _as_float_array(inp, "inp")
     flow = _as_float_array(flow, "flow")
     acc = inp if inplace else inp.copy()
-    fn = _ff.flow_matvec_sub_ if sub else _ff.flow_matvec_add_
+    fn = _ff.flow_submatvec_ if sub else _ff.flow_addmatvec_
     fn(
         acc,
         flow,
@@ -162,7 +162,7 @@ def _flow_diag_acc(inp, absolute, membrane, bending, shears, div, voxel_size,
                    bound, ndim, sub, inplace):
     inp = _as_float_array(inp, "inp")
     acc = inp if inplace else inp.copy()
-    fn = _ff.flow_diag_sub_ if sub else _ff.flow_diag_add_
+    fn = _ff.flow_subdiag_ if sub else _ff.flow_adddiag_
     fn(
         acc,
         voxel_size=_voxel_size(voxel_size, ndim),
@@ -521,7 +521,7 @@ def flow_forward(
 # :func:`flow_diag` — ``out = inp ± op(...)`` — so no new kernel is needed.
 
 
-def flow_matvec_add(
+def flow_addmatvec(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -545,7 +545,7 @@ def flow_matvec_add(
     )
 
 
-def flow_matvec_sub(
+def flow_submatvec(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -569,7 +569,7 @@ def flow_matvec_sub(
     )
 
 
-def flow_matvec_add_(
+def flow_addmatvec_(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -592,7 +592,7 @@ def flow_matvec_add_(
     )
 
 
-def flow_matvec_sub_(
+def flow_submatvec_(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -615,7 +615,7 @@ def flow_matvec_sub_(
     )
 
 
-def flow_diag_add(
+def flow_adddiag(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -637,7 +637,7 @@ def flow_diag_add(
     )
 
 
-def flow_diag_sub(
+def flow_subdiag(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -659,7 +659,7 @@ def flow_diag_sub(
     )
 
 
-def flow_diag_add_(
+def flow_adddiag_(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -681,7 +681,7 @@ def flow_diag_add_(
     )
 
 
-def flow_diag_sub_(
+def flow_subdiag_(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -765,7 +765,7 @@ def field_forward(
     return out
 
 
-def field_matvec_add(
+def field_addmatvec(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -787,7 +787,7 @@ def field_matvec_add(
     )
 
 
-def field_matvec_sub(
+def field_submatvec(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -809,7 +809,7 @@ def field_matvec_sub(
     )
 
 
-def field_matvec_add_(
+def field_addmatvec_(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -830,7 +830,7 @@ def field_matvec_add_(
     )
 
 
-def field_matvec_sub_(
+def field_submatvec_(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -851,7 +851,7 @@ def field_matvec_sub_(
     )
 
 
-def field_diag_add(
+def field_adddiag(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -871,7 +871,7 @@ def field_diag_add(
     )
 
 
-def field_diag_sub(
+def field_subdiag(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -891,7 +891,7 @@ def field_diag_sub(
     )
 
 
-def field_diag_add_(
+def field_adddiag_(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -911,7 +911,7 @@ def field_diag_add_(
     )
 
 
-def field_diag_sub_(
+def field_subdiag_(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,

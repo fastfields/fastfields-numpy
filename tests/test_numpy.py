@@ -711,15 +711,15 @@ def test_flow_matvec_accumulate_variants():
     kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
     L = ff.flow_matvec(flow, **kw)
     # fresh-array forms
-    np.testing.assert_allclose(ff.flow_matvec_add(base, flow, **kw), base + L)
-    np.testing.assert_allclose(ff.flow_matvec_sub(base, flow, **kw), base - L)
+    np.testing.assert_allclose(ff.flow_addmatvec(base, flow, **kw), base + L)
+    np.testing.assert_allclose(ff.flow_submatvec(base, flow, **kw), base - L)
     # in-place forms mutate and return the same array
     a = base.copy()
-    r = ff.flow_matvec_add_(a, flow, **kw)
+    r = ff.flow_addmatvec_(a, flow, **kw)
     assert r is a
     np.testing.assert_allclose(a, base + L)
     s = base.copy()
-    r = ff.flow_matvec_sub_(s, flow, **kw)
+    r = ff.flow_submatvec_(s, flow, **kw)
     assert r is s
     np.testing.assert_allclose(s, base - L)
 
@@ -730,13 +730,13 @@ def test_flow_diag_accumulate_variants():
     base = rng.standard_normal((H, W, 2))
     kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
     d = ff.flow_diag(base.shape, **kw)
-    np.testing.assert_allclose(ff.flow_diag_add(base, **kw), base + d)
-    np.testing.assert_allclose(ff.flow_diag_sub(base, **kw), base - d)
+    np.testing.assert_allclose(ff.flow_adddiag(base, **kw), base + d)
+    np.testing.assert_allclose(ff.flow_subdiag(base, **kw), base - d)
     a = base.copy()
-    assert ff.flow_diag_add_(a, **kw) is a
+    assert ff.flow_adddiag_(a, **kw) is a
     np.testing.assert_allclose(a, base + d)
     s = base.copy()
-    assert ff.flow_diag_sub_(s, **kw) is s
+    assert ff.flow_subdiag_(s, **kw) is s
     np.testing.assert_allclose(s, base - d)
 
 
@@ -780,18 +780,18 @@ def test_field_accumulate_variants():
     L = ff.field_matvec(field, **kw)
     d = ff.field_diag(base.shape, **kw)
     np.testing.assert_allclose(
-        ff.field_matvec_add(base, field, **kw), base + L
+        ff.field_addmatvec(base, field, **kw), base + L
     )
     np.testing.assert_allclose(
-        ff.field_matvec_sub(base, field, **kw), base - L
+        ff.field_submatvec(base, field, **kw), base - L
     )
-    np.testing.assert_allclose(ff.field_diag_add(base, **kw), base + d)
-    np.testing.assert_allclose(ff.field_diag_sub(base, **kw), base - d)
+    np.testing.assert_allclose(ff.field_adddiag(base, **kw), base + d)
+    np.testing.assert_allclose(ff.field_subdiag(base, **kw), base - d)
     a = base.copy()
-    assert ff.field_matvec_add_(a, field, **kw) is a
+    assert ff.field_addmatvec_(a, field, **kw) is a
     np.testing.assert_allclose(a, base + L)
     s = base.copy()
-    assert ff.field_diag_sub_(s, **kw) is s
+    assert ff.field_subdiag_(s, **kw) is s
     np.testing.assert_allclose(s, base - d)
 
 
@@ -852,11 +852,11 @@ def test_out_of_place_accumulate_does_not_mutate_input():
     field = rng.standard_normal((H, W, C))
     base = rng.standard_normal((H, W, C))
     before = base.copy()
-    for fn in (ff.field_matvec_add, ff.field_matvec_sub):
+    for fn in (ff.field_addmatvec, ff.field_submatvec):
         out = fn(base, field, **_ACC_FIELD_KW)
         np.testing.assert_array_equal(base, before)
         assert out is not base
-    for fn in (ff.field_diag_add, ff.field_diag_sub):
+    for fn in (ff.field_adddiag, ff.field_subdiag):
         out = fn(base, **_ACC_FIELD_KW)
         np.testing.assert_array_equal(base, before)
         assert out is not base
@@ -868,7 +868,7 @@ def test_inplace_accumulate_mutates_and_returns_same_array():
     field = rng.standard_normal((H, W, C))
     base = rng.standard_normal((H, W, C))
     a = base.copy()
-    assert ff.field_matvec_add_(a, field, **_ACC_FIELD_KW) is a
+    assert ff.field_addmatvec_(a, field, **_ACC_FIELD_KW) is a
     assert not np.array_equal(a, base)
 
 
@@ -878,13 +878,13 @@ def test_inplace_and_out_of_place_agree_field():
     field = rng.standard_normal((H, W, C))
     base = rng.standard_normal((H, W, C))
     a = base.copy()
-    ff.field_matvec_add_(a, field, **_ACC_FIELD_KW)
-    b = ff.field_matvec_add(base, field, **_ACC_FIELD_KW)
+    ff.field_addmatvec_(a, field, **_ACC_FIELD_KW)
+    b = ff.field_addmatvec(base, field, **_ACC_FIELD_KW)
     np.testing.assert_array_equal(a, b)
 
     a = base.copy()
-    ff.field_diag_sub_(a, **_ACC_FIELD_KW)
-    b = ff.field_diag_sub(base, **_ACC_FIELD_KW)
+    ff.field_subdiag_(a, **_ACC_FIELD_KW)
+    b = ff.field_subdiag(base, **_ACC_FIELD_KW)
     np.testing.assert_array_equal(a, b)
 
 
@@ -894,13 +894,13 @@ def test_inplace_and_out_of_place_agree_flow():
     flow = rng.standard_normal((H, W, 2))
     base = rng.standard_normal((H, W, 2))
     a = base.copy()
-    ff.flow_matvec_sub_(a, flow, **_ACC_FLOW_KW)
-    b = ff.flow_matvec_sub(base, flow, **_ACC_FLOW_KW)
+    ff.flow_submatvec_(a, flow, **_ACC_FLOW_KW)
+    b = ff.flow_submatvec(base, flow, **_ACC_FLOW_KW)
     np.testing.assert_array_equal(a, b)
 
     a = base.copy()
-    ff.flow_diag_add_(a, **_ACC_FLOW_KW)
-    b = ff.flow_diag_add(base, **_ACC_FLOW_KW)
+    ff.flow_adddiag_(a, **_ACC_FLOW_KW)
+    b = ff.flow_adddiag(base, **_ACC_FLOW_KW)
     np.testing.assert_array_equal(a, b)
 
 
@@ -912,13 +912,13 @@ def test_accumulate_matches_reference_composition():
     base = rng.standard_normal((H, W, C))
     L = ff.field_matvec(field, **_ACC_FIELD_KW)
     np.testing.assert_allclose(
-        ff.field_matvec_add(base, field, **_ACC_FIELD_KW), base + L,
+        ff.field_addmatvec(base, field, **_ACC_FIELD_KW), base + L,
         atol=1e-12)
     np.testing.assert_allclose(
-        ff.field_matvec_sub(base, field, **_ACC_FIELD_KW), base - L,
+        ff.field_submatvec(base, field, **_ACC_FIELD_KW), base - L,
         atol=1e-12)
     d = ff.field_diag(base.shape, **_ACC_FIELD_KW)
     np.testing.assert_allclose(
-        ff.field_diag_add(base, **_ACC_FIELD_KW), base + d, atol=1e-12)
+        ff.field_adddiag(base, **_ACC_FIELD_KW), base + d, atol=1e-12)
     np.testing.assert_allclose(
-        ff.field_diag_sub(base, **_ACC_FIELD_KW), base - d, atol=1e-12)
+        ff.field_subdiag(base, **_ACC_FIELD_KW), base - d, atol=1e-12)
