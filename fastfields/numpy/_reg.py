@@ -25,28 +25,28 @@ from ._util import _as_bound, _as_float_array
 
 __all__ = [
     "field_matvec",
-    "field_matvec_add",
-    "field_matvec_add_",
-    "field_matvec_sub",
-    "field_matvec_sub_",
+    "field_addmatvec",
+    "field_addmatvec_",
+    "field_submatvec",
+    "field_submatvec_",
     "field_diag",
-    "field_diag_add",
-    "field_diag_add_",
-    "field_diag_sub",
-    "field_diag_sub_",
+    "field_adddiag",
+    "field_adddiag_",
+    "field_subdiag",
+    "field_subdiag_",
     "field_kernel",
     "field_precond",
     "field_forward",
     "flow_matvec",
-    "flow_matvec_add",
-    "flow_matvec_add_",
-    "flow_matvec_sub",
-    "flow_matvec_sub_",
+    "flow_addmatvec",
+    "flow_addmatvec_",
+    "flow_submatvec",
+    "flow_submatvec_",
     "flow_diag",
-    "flow_diag_add",
-    "flow_diag_add_",
-    "flow_diag_sub",
-    "flow_diag_sub_",
+    "flow_adddiag",
+    "flow_adddiag_",
+    "flow_subdiag",
+    "flow_subdiag_",
     "flow_kernel",
     "flow_relax",
     "flow_precond",
@@ -85,6 +85,96 @@ def _voxel_size(
             f"got {value!r}"
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# In-place accumulate ops (`out (+/-)= ...`)
+# ---------------------------------------------------------------------------
+#
+# There is exactly ONE kernel behind each of these: the in-place-only C
+# primitive `ff::{field,flow}_{matvec,diag}_{add,sub}_`, restored from
+# jitfields' `op='+'` / `op='-'` entry points. The out-of-place spelling simply
+# copies the caller's array first and then runs the same primitive on the copy
+# -- it is not a second code path, and it never materialises a separate
+# temporary for the regulariser result.
+
+
+def _field_matvec_acc(inp, field, absolute, membrane, bending, voxel_size,
+                      bound, ndim, sub, inplace):
+    inp = _as_float_array(inp, "inp")
+    field = _as_float_array(field, "field")
+    acc = inp if inplace else inp.copy()
+    channels = field.shape[-1]
+    fn = _ff.field_submatvec_ if sub else _ff.field_addmatvec_
+    fn(
+        acc,
+        field,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return acc
+
+
+def _field_diag_acc(inp, absolute, membrane, bending, voxel_size, bound, ndim,
+                    sub, inplace):
+    inp = _as_float_array(inp, "inp")
+    acc = inp if inplace else inp.copy()
+    channels = acc.shape[-1]
+    fn = _ff.field_subdiag_ if sub else _ff.field_adddiag_
+    fn(
+        acc,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return acc
+
+
+def _flow_matvec_acc(inp, flow, absolute, membrane, bending, shears, div,
+                     voxel_size, bound, ndim, sub, inplace):
+    inp = _as_float_array(inp, "inp")
+    flow = _as_float_array(flow, "flow")
+    acc = inp if inplace else inp.copy()
+    fn = _ff.flow_submatvec_ if sub else _ff.flow_addmatvec_
+    fn(
+        acc,
+        flow,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=float(absolute),
+        membrane=float(membrane),
+        bending=float(bending),
+        shears=float(shears),
+        div=float(div),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return acc
+
+
+def _flow_diag_acc(inp, absolute, membrane, bending, shears, div, voxel_size,
+                   bound, ndim, sub, inplace):
+    inp = _as_float_array(inp, "inp")
+    acc = inp if inplace else inp.copy()
+    fn = _ff.flow_subdiag_ if sub else _ff.flow_adddiag_
+    fn(
+        acc,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=float(absolute),
+        membrane=float(membrane),
+        bending=float(bending),
+        shears=float(shears),
+        div=float(div),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return acc
 
 
 def field_matvec(
@@ -431,7 +521,7 @@ def flow_forward(
 # :func:`flow_diag` — ``out = inp ± op(...)`` — so no new kernel is needed.
 
 
-def flow_matvec_add(
+def flow_addmatvec(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -444,22 +534,18 @@ def flow_matvec_add(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp + L @ flow`` (fresh array); ``L`` = flow regulariser."""
-    inp = _as_float_array(inp, "inp")
-    return inp + flow_matvec(
-        flow,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """Return ``inp + L @ flow`` as a **new** array.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy --
+    one kernel, no separate temporary for the regulariser result.
+    """
+    return _flow_matvec_acc(
+        inp, flow, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=False, inplace=False,
     )
 
 
-def flow_matvec_sub(
+def flow_submatvec(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -472,22 +558,18 @@ def flow_matvec_sub(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp - L @ flow`` (fresh array)."""
-    inp = _as_float_array(inp, "inp")
-    return inp - flow_matvec(
-        flow,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """Return ``inp - L @ flow`` as a **new** array.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy --
+    one kernel, no separate temporary for the regulariser result.
+    """
+    return _flow_matvec_acc(
+        inp, flow, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=True, inplace=False,
     )
 
 
-def flow_matvec_add_(
+def flow_addmatvec_(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -500,23 +582,17 @@ def flow_matvec_add_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp += L @ flow`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp += flow_matvec(
-        flow,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """In place ``inp += L @ flow`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _flow_matvec_acc(
+        inp, flow, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=False, inplace=True,
     )
-    return inp
 
 
-def flow_matvec_sub_(
+def flow_submatvec_(
     inp: np.ndarray,
     flow: np.ndarray,
     absolute: float = 0.0,
@@ -529,23 +605,17 @@ def flow_matvec_sub_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp -= L @ flow`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp -= flow_matvec(
-        flow,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """In place ``inp -= L @ flow`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _flow_matvec_acc(
+        inp, flow, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=True, inplace=True,
     )
-    return inp
 
 
-def flow_diag_add(
+def flow_adddiag(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -557,23 +627,17 @@ def flow_diag_add(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp + diag(L)`` (fresh array), shaped like ``inp``."""
-    inp = _as_float_array(inp, "inp")
-    return inp + flow_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """Return ``inp + diag(L)`` as a **new** array, shaped like ``inp``.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy.
+    """
+    return _flow_diag_acc(
+        inp, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=False, inplace=False,
     )
 
 
-def flow_diag_sub(
+def flow_subdiag(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -585,23 +649,17 @@ def flow_diag_sub(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp - diag(L)`` (fresh array), shaped like ``inp``."""
-    inp = _as_float_array(inp, "inp")
-    return inp - flow_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """Return ``inp - diag(L)`` as a **new** array, shaped like ``inp``.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy.
+    """
+    return _flow_diag_acc(
+        inp, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=True, inplace=False,
     )
 
 
-def flow_diag_add_(
+def flow_adddiag_(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -613,24 +671,17 @@ def flow_diag_add_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp += diag(L)`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp += flow_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """In place ``inp += diag(L)`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _flow_diag_acc(
+        inp, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=False, inplace=True,
     )
-    return inp
 
 
-def flow_diag_sub_(
+def flow_subdiag_(
     inp: np.ndarray,
     absolute: float = 0.0,
     membrane: float = 0.0,
@@ -642,29 +693,14 @@ def flow_diag_sub_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp -= diag(L)`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp -= flow_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        shears,
-        div,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """In place ``inp -= diag(L)`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _flow_diag_acc(
+        inp, absolute, membrane, bending, shears, div,
+        voxel_size, bound, ndim, sub=True, inplace=True,
     )
-    return inp
-
-
-# --- field: precond / forward / accumulate -------------------------------
-#
-# Field analogues of the flow helpers. ``field_precond`` / ``field_forward``
-# compose the compact-symmetric solve/matvec with the field regulariser; the
-# ``_add`` / ``_sub`` / in-place forms accumulate ``inp ± op(...)``. All are
-# pure Python compositions over field_matvec / field_diag — no new kernel.
 
 
 def field_precond(
@@ -729,7 +765,7 @@ def field_forward(
     return out
 
 
-def field_matvec_add(
+def field_addmatvec(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -740,20 +776,18 @@ def field_matvec_add(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp + L @ field`` (fresh); ``L`` = field regulariser."""
-    inp = _as_float_array(inp, "inp")
-    return inp + field_matvec(
-        field,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """Return ``inp + L @ field`` as a **new** array.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy --
+    one kernel, no separate temporary for the regulariser result.
+    """
+    return _field_matvec_acc(
+        inp, field, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=False, inplace=False,
     )
 
 
-def field_matvec_sub(
+def field_submatvec(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -764,20 +798,18 @@ def field_matvec_sub(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp - L @ field`` (fresh)."""
-    inp = _as_float_array(inp, "inp")
-    return inp - field_matvec(
-        field,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """Return ``inp - L @ field`` as a **new** array.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy --
+    one kernel, no separate temporary for the regulariser result.
+    """
+    return _field_matvec_acc(
+        inp, field, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=True, inplace=False,
     )
 
 
-def field_matvec_add_(
+def field_addmatvec_(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -788,21 +820,17 @@ def field_matvec_add_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp += L @ field`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp += field_matvec(
-        field,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """In place ``inp += L @ field`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _field_matvec_acc(
+        inp, field, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=False, inplace=True,
     )
-    return inp
 
 
-def field_matvec_sub_(
+def field_submatvec_(
     inp: np.ndarray,
     field: np.ndarray,
     absolute: float | Sequence[float] | None = None,
@@ -813,21 +841,17 @@ def field_matvec_sub_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp -= L @ field`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp -= field_matvec(
-        field,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
+    """In place ``inp -= L @ field`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _field_matvec_acc(
+        inp, field, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=True, inplace=True,
     )
-    return inp
 
 
-def field_diag_add(
+def field_adddiag(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -837,21 +861,17 @@ def field_diag_add(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp + diag(L)`` (fresh), shaped like ``inp``."""
-    inp = _as_float_array(inp, "inp")
-    return inp + field_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """Return ``inp + diag(L)`` as a **new** array, shaped like ``inp``.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy.
+    """
+    return _field_diag_acc(
+        inp, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=False, inplace=False,
     )
 
 
-def field_diag_sub(
+def field_subdiag(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -861,21 +881,17 @@ def field_diag_sub(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """Return ``inp - diag(L)`` (fresh), shaped like ``inp``."""
-    inp = _as_float_array(inp, "inp")
-    return inp - field_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """Return ``inp - diag(L)`` as a **new** array, shaped like ``inp``.
+
+    Copies ``inp`` and runs the in-place accumulate primitive on the copy.
+    """
+    return _field_diag_acc(
+        inp, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=True, inplace=False,
     )
 
 
-def field_diag_add_(
+def field_adddiag_(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -885,22 +901,17 @@ def field_diag_add_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp += diag(L)`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp += field_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """In place ``inp += diag(L)`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _field_diag_acc(
+        inp, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=False, inplace=True,
     )
-    return inp
 
 
-def field_diag_sub_(
+def field_subdiag_(
     inp: np.ndarray,
     absolute: float | Sequence[float] | None = None,
     membrane: float | Sequence[float] | None = None,
@@ -910,16 +921,11 @@ def field_diag_sub_(
     bound: int | str = "dct2",
     ndim: int = 1,
 ) -> np.ndarray:
-    """In place ``inp -= diag(L)`` (``inp`` a float array); returns it."""
-    inp = _as_float_array(inp, "inp")
-    inp -= field_diag(
-        inp.shape,
-        absolute,
-        membrane,
-        bending,
-        voxel_size=voxel_size,
-        bound=bound,
-        ndim=ndim,
-        dtype=inp.dtype,
+    """In place ``inp -= diag(L)`` (``inp`` a float array); returns it.
+
+    Calls the fused in-place C primitive directly.
+    """
+    return _field_diag_acc(
+        inp, absolute, membrane, bending,
+        voxel_size, bound, ndim, sub=True, inplace=True,
     )
-    return inp
