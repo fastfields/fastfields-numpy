@@ -1,7 +1,7 @@
 # fastfields-numpy
 
 A thin, user-friendly numpy interface over the
-[`fastfields.dlpack`](../fastfields-bind-py) nanobind bindings.
+[`fastfields.dlpack`](https://github.com/fastfields/fastfields-dlpack) nanobind bindings.
 
 The bindings themselves operate *in place* / write through pre-allocated output
 arrays.  `fastfields.numpy` wraps them so that every function accepts numpy

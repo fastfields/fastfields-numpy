@@ -9,112 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastfields.dlpack import Bound, Spline
+# `order`/`bound` normalisation is centralised in fastfields.dlpack so
+# every backend shares one implementation; re-export under the private
+# names the numpy modules (_dt, _resample) already import.
+from fastfields.dlpack import as_bound as _as_bound  # noqa: F401
+from fastfields.dlpack import as_spline as _as_spline  # noqa: F401
 
 import numpy as np
 
 # The bindings only implement float32/float64 kernels.
 _FLOAT_DTYPES = (np.float32, np.float64)
-
-# --------------------------------------------------------------------------- #
-# argument normalisation helpers                                              #
-# --------------------------------------------------------------------------- #
-
-_SPLINE_ALIASES = {
-    "nearest": Spline.Nearest,
-    "constant": Spline.Nearest,
-    "linear": Spline.Linear,
-    "quadratic": Spline.Quadratic,
-    "cubic": Spline.Cubic,
-    "fourth": Spline.FourthOrder,
-    "fifth": Spline.FifthOrder,
-    "sixth": Spline.SixthOrder,
-    "seventh": Spline.SeventhOrder,
-}
-
-_BOUND_ALIASES = {
-    "zero": Bound.Zero,
-    "zeros": Bound.Zero,
-    "replicate": Bound.Replicate,
-    "nearest": Bound.Replicate,
-    "dct1": Bound.DCT1,
-    "dct2": Bound.DCT2,
-    "neumann": Bound.DCT2,
-    "reflect": Bound.DCT2,
-    "dst1": Bound.DST1,
-    "dst2": Bound.DST2,
-    "dirichlet": Bound.DST2,
-    "dft": Bound.DFT,
-    "wrap": Bound.DFT,
-    "circular": Bound.DFT,
-    "nocheck": Bound.NoCheck,
-}
-
-
-def _as_spline(value: int | str | Spline) -> int:
-    """Normalise a spline-order argument to an ``int`` in ``0..7``.
-
-    Parameters
-    ----------
-    value : int, str or Spline
-        A spline order given as an integer, a :class:`Spline` enum, or a
-        friendly string alias (e.g. ``"cubic"``).
-
-    Returns
-    -------
-    int
-        The spline order in ``0..7``.
-
-    Raises
-    ------
-    ValueError
-        If the alias is unknown or the integer is outside ``0..7``.
-    """
-    if isinstance(value, str):
-        key = value.strip().lower()
-        if key not in _SPLINE_ALIASES:
-            raise ValueError(
-                f"unknown spline order {value!r}; "
-                f"expected an int 0..7 or one of {sorted(_SPLINE_ALIASES)}"
-            )
-        return int(_SPLINE_ALIASES[key])
-    ivalue = int(value)
-    if not 0 <= ivalue <= 7:
-        raise ValueError(f"spline order must be in 0..7, got {ivalue}")
-    return ivalue
-
-
-def _as_bound(value: int | str | Bound) -> int:
-    """Normalise a boundary-condition argument to an ``int`` in ``0..7``.
-
-    Parameters
-    ----------
-    value : int, str or Bound
-        A boundary condition given as an integer, a :class:`Bound` enum, or a
-        friendly string alias (e.g. ``"dct2"``, ``"wrap"``).
-
-    Returns
-    -------
-    int
-        The boundary condition in ``0..7``.
-
-    Raises
-    ------
-    ValueError
-        If the alias is unknown or the integer is outside ``0..7``.
-    """
-    if isinstance(value, str):
-        key = value.strip().lower()
-        if key not in _BOUND_ALIASES:
-            raise ValueError(
-                f"unknown boundary condition {value!r}; "
-                f"expected an int 0..7 or one of {sorted(_BOUND_ALIASES)}"
-            )
-        return int(_BOUND_ALIASES[key])
-    ivalue = int(value)
-    if not 0 <= ivalue <= 7:
-        raise ValueError(f"boundary condition must be in 0..7, got {ivalue}")
-    return ivalue
 
 
 def _as_float_array(

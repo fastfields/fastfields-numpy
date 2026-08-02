@@ -14,7 +14,12 @@ import fastfields.dlpack as _ff
 
 import numpy as np
 
-from ._util import _as_float_array, _broadcast_batch
+from ._util import (
+    _as_float_array,
+    _bcast_view,
+    _broadcast_batch,
+    _validate_inplace,
+)
 
 __all__ = [
     "sym_channels_from_packed",
@@ -77,9 +82,9 @@ def _check_sym(
     Returns
     -------
     mat : numpy.ndarray
-        Float matrix (native strides preserved).
+        Float matrix, promoted to the common dtype.
     vec : numpy.ndarray
-        Float vector cast to ``mat``'s dtype.
+        Float vector, promoted to the common dtype.
     c : int
         The channel count ``C``.
 
@@ -87,9 +92,20 @@ def _check_sym(
     ------
     ValueError
         If ``vec``'s channel count does not match the matrix packing.
+
+    Notes
+    -----
+    The binding dispatches a single ``scalar_t`` for both operands, so ``mat``
+    and ``vec`` must share a dtype. Rather than silently casting ``vec`` to
+    ``mat``'s dtype (which would drop precision for a float64 ``vec`` against a
+    float32 ``mat``), both are promoted to ``numpy.result_type(mat, vec)`` --
+    the lower-precision operand is upcast, never the reverse.
     """
     mat = _as_float_array(mat, matname)
-    vec = _as_float_array(vec, vecname, dtype=mat.dtype)
+    vec = _as_float_array(vec, vecname)
+    dtype = np.result_type(mat.dtype, vec.dtype)
+    mat = mat.astype(dtype, copy=False)
+    vec = vec.astype(dtype, copy=False)
     c = sym_channels_from_packed(mat.shape[-1])
     if vec.shape[-1] != c:
         raise ValueError(
@@ -123,76 +139,112 @@ def sym_matvec(mat: np.ndarray, vec: np.ndarray) -> np.ndarray:
     return out
 
 
+def _addsub_matvec_(
+    out0: np.ndarray,
+    mat: np.ndarray,
+    vec: np.ndarray,
+    binding,
+) -> np.ndarray:
+    """Shared in-place ``out0 (+|-)= H @ vec`` implementation.
+
+    ``out0`` is mutated in place and returned. It fixes the batch (leading)
+    shape; ``mat`` and ``vec`` are broadcast (zero-copy) to that batch shape.
+    The trailing-``_`` contract requires the caller's ``out0`` buffer to be
+    updated, so we write through it via DLPack and never materialise a private
+    copy (matching the cupy backend).
+    """
+    # out0 fixes the output buffer: validate it in place (no copy) so the
+    # binding writes through the caller's array.
+    out0 = _validate_inplace(out0, "out0")
+    # mat/vec must match out0's dtype (its buffer cannot be re-typed in place).
+    mat = _as_float_array(mat, "mat", dtype=out0.dtype)
+    vec = _as_float_array(vec, "vec", dtype=out0.dtype)
+    c = sym_channels_from_packed(mat.shape[-1])
+    if vec.shape[-1] != c:
+        raise ValueError(
+            f"vec has {vec.shape[-1]} channels but the packed matrix "
+            f"encodes {c} channels"
+        )
+    if out0.shape[-1] != c:
+        raise ValueError("out0 must have the same channel count as vec")
+    # out0 fixes the batch; broadcast mat/vec onto it (zero-copy views).
+    batch = out0.shape[:-1]
+    mat_b = _bcast_view(mat, batch + (mat.shape[-1],))
+    vec_b = _bcast_view(vec, batch + (c,))
+    binding(out0, mat_b, vec_b)
+    return out0
+
+
 def sym_addmatvec_(
     out0: np.ndarray, mat: np.ndarray, vec: np.ndarray
 ) -> np.ndarray:
-    """Compute ``out0 + H @ vec`` (returns a new array; ``out0`` unchanged).
+    """Accumulate ``out0 += H @ vec`` **in place**; returns ``out0``.
+
+    The trailing ``_`` denotes an in-place op: the caller's ``out0`` array is
+    mutated directly (written through its DLPack buffer) and also returned for
+    convenience.
 
     Parameters
     ----------
     out0 : numpy.ndarray
-        Accumulator, trailing dim ``C``.
+        Accumulator, trailing dim ``C``, mutated in place. Must be a
+        float32/float64 array; it fixes the batch (leading) shape.
     mat : numpy.ndarray
-        Compact-symmetric matrix, trailing dim ``C*(C+1)/2``.
+        Compact-symmetric matrix, trailing dim ``C*(C+1)/2``. Broadcast to
+        ``out0``'s batch shape.
     vec : numpy.ndarray
-        Vector, trailing dim ``C``.
+        Vector, trailing dim ``C``. Broadcast to ``out0``'s batch shape.
 
     Returns
     -------
     numpy.ndarray
-        ``out0 + H @ vec``. Batch dims of ``out0``/``mat``/``vec`` broadcast.
+        ``out0`` (the same array object), now holding ``out0 + H @ vec``.
 
     Raises
     ------
+    TypeError
+        If ``out0`` is not a float32/float64 numpy array.
     ValueError
-        If ``out0``'s channel count does not match ``vec``.
+        If ``out0``'s channel count does not match ``vec``, or ``mat``/``vec``
+        cannot be broadcast to ``out0``'s batch shape.
     """
-    mat, vec, c = _check_sym(mat, vec)
-    out0 = _as_float_array(out0, "out0", dtype=mat.dtype)
-    if out0.shape[-1] != c:
-        raise ValueError("out0 must have the same channel count as vec")
-    batch, (out_b, mat_b, vec_b) = _broadcast_batch(
-        [(out0, 1), (mat, 1), (vec, 1)]
-    )
-    out = np.array(out_b, dtype=mat.dtype)  # materialise a contiguous buffer
-    _ff.sym_addmatvec_(out, mat_b, vec_b)
-    return out
+    return _addsub_matvec_(out0, mat, vec, _ff.sym_addmatvec_)
 
 
 def sym_submatvec_(
     out0: np.ndarray, mat: np.ndarray, vec: np.ndarray
 ) -> np.ndarray:
-    """Compute ``out0 - H @ vec`` (returns a new array; ``out0`` unchanged).
+    """Accumulate ``out0 -= H @ vec`` **in place**; returns ``out0``.
+
+    The trailing ``_`` denotes an in-place op: the caller's ``out0`` array is
+    mutated directly (written through its DLPack buffer) and also returned for
+    convenience.
 
     Parameters
     ----------
     out0 : numpy.ndarray
-        Accumulator, trailing dim ``C``.
+        Accumulator, trailing dim ``C``, mutated in place. Must be a
+        float32/float64 array; it fixes the batch (leading) shape.
     mat : numpy.ndarray
-        Compact-symmetric matrix, trailing dim ``C*(C+1)/2``.
+        Compact-symmetric matrix, trailing dim ``C*(C+1)/2``. Broadcast to
+        ``out0``'s batch shape.
     vec : numpy.ndarray
-        Vector, trailing dim ``C``.
+        Vector, trailing dim ``C``. Broadcast to ``out0``'s batch shape.
 
     Returns
     -------
     numpy.ndarray
-        ``out0 - H @ vec``. Batch dims of ``out0``/``mat``/``vec`` broadcast.
+        ``out0`` (the same array object), now holding ``out0 - H @ vec``.
 
     Raises
     ------
+    TypeError
+        If ``out0`` is not a float32/float64 numpy array.
     ValueError
-        If ``out0``'s channel count does not match ``vec``.
+        If ``out0``'s channel count does not match ``vec``, or ``mat``/``vec``
+        cannot be broadcast to ``out0``'s batch shape.
     """
-    mat, vec, c = _check_sym(mat, vec)
-    out0 = _as_float_array(out0, "out0", dtype=mat.dtype)
-    if out0.shape[-1] != c:
-        raise ValueError("out0 must have the same channel count as vec")
-    batch, (out_b, mat_b, vec_b) = _broadcast_batch(
-        [(out0, 1), (mat, 1), (vec, 1)]
-    )
-    out = np.array(out_b, dtype=mat.dtype)  # materialise a contiguous buffer
-    _ff.sym_submatvec_(out, mat_b, vec_b)
-    return out
+    return _addsub_matvec_(out0, mat, vec, _ff.sym_submatvec_)
 
 
 def sym_matvec_backward(grad: np.ndarray, vec: np.ndarray) -> np.ndarray:

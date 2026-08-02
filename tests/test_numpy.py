@@ -130,6 +130,23 @@ def test_sym_matvec_matches_dense(C):
     assert out.shape == vec.shape
 
 
+def test_sym_matvec_mixed_dtype_promotes_not_downcasts():
+    # A float32 mat + float64 vec must promote to float64 (upcast the matrix),
+    # never silently downcast the vector -- that would drop precision.
+    C = 3
+    mats = _random_symmetric(4, C, seed=7)
+    packed = _pack_symmetric(mats).astype(np.float32)
+    vec = np.random.default_rng(7).standard_normal((4, C)).astype(np.float64)
+
+    out = ff.sym_matvec(packed, vec)
+    assert out.dtype == np.float64
+    # dense equivalent of the float32-rounded packing, promoted to float64;
+    # the float64 vector keeps its precision through the product.
+    mats32 = mats.astype(np.float32).astype(np.float64)
+    ref = np.einsum("bij,bj->bi", mats32, vec)
+    np.testing.assert_allclose(out, ref, rtol=1e-6, atol=1e-6)
+
+
 @pytest.mark.parametrize("C", [2, 3])
 def test_sym_solve_inverts_matvec(C):
     B = 6
@@ -224,6 +241,64 @@ def test_sym_solve_with_weight():
 
 
 # --------------------------------------------------------------------------- #
+# in-place add/sub matvec (C3: trailing-`_` must mutate the caller's array)   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("C", [2, 3])
+def test_sym_addmatvec_mutates_caller_inplace(C):
+    # Regression for fastfields-lib#17 (C3): the trailing-`_` variant must
+    # write through the caller's accumulator, not return a private copy.
+    B = 5
+    mats = _random_symmetric(B, C, seed=C)
+    packed = _pack_symmetric(mats)
+    vec = np.random.default_rng(100 + C).standard_normal((B, C))
+    out0 = np.random.default_rng(200 + C).standard_normal((B, C))
+
+    expected = out0 + np.einsum("bij,bj->bi", mats, vec)
+    ret = ff.sym_addmatvec_(out0, packed, vec)
+    # returned object IS the caller's array, and it was updated in place.
+    assert ret is out0
+    np.testing.assert_allclose(out0, expected, rtol=1e-8, atol=1e-8)
+
+
+@pytest.mark.parametrize("C", [2, 3])
+def test_sym_submatvec_mutates_caller_inplace(C):
+    B = 5
+    mats = _random_symmetric(B, C, seed=C)
+    packed = _pack_symmetric(mats)
+    vec = np.random.default_rng(100 + C).standard_normal((B, C))
+    out0 = np.random.default_rng(200 + C).standard_normal((B, C))
+
+    expected = out0 - np.einsum("bij,bj->bi", mats, vec)
+    ret = ff.sym_submatvec_(out0, packed, vec)
+    assert ret is out0
+    np.testing.assert_allclose(out0, expected, rtol=1e-8, atol=1e-8)
+
+
+def test_sym_addmatvec_broadcasts_onto_accumulator():
+    # out0 fixes the batch shape; mat/vec (batch (1,)) broadcast onto it.
+    C, B = 3, 4
+    mats = _random_symmetric(1, C, seed=11)  # batch (1,)
+    packed = _pack_symmetric(mats)  # (1, 6)
+    vec = np.random.default_rng(3).standard_normal((1, C))  # batch (1,)
+    out0 = np.zeros((B, C))
+
+    ff.sym_addmatvec_(out0, packed, vec)
+    dense = np.broadcast_to(mats, (B, C, C))
+    ref = np.broadcast_to(np.einsum("bij,bj->bi", dense, vec), (B, C))
+    np.testing.assert_allclose(out0, ref, rtol=1e-8, atol=1e-8)
+
+
+def test_sym_addmatvec_channel_mismatch_raises():
+    packed = np.zeros(3)  # encodes C=2
+    vec = np.zeros(3)  # C=3
+    out0 = np.zeros(3)
+    with pytest.raises(ValueError):
+        ff.sym_addmatvec_(out0, packed, vec)
+
+
+# --------------------------------------------------------------------------- #
 # spline coeff / resample                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -286,6 +361,90 @@ def test_restriction_runs_and_shapes():
 
 
 # --------------------------------------------------------------------------- #
+# anchor conventions (match interpol.resize)                                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_anchor_scale_shift_mapping():
+    from fastfields.dlpack import anchor_scale_shift as _anchor_scale_shift
+
+    # 8 -> 4 downsample; scale/shift per torch-interpol convention.
+    for name, abbr, exp_scale, exp_shift in [
+        ("centers", "c", 7 / 3, 0.0),
+        ("edges", "e", 2.0, 0.5),
+        ("first", "f", 2.0, 0.0),
+        ("last", "l", 2.0, 1.0),
+    ]:
+        scale, shift = _anchor_scale_shift(name, (8,), (4,), 1)
+        assert shift == exp_shift
+        np.testing.assert_allclose(scale, [exp_scale])
+        # the abbreviation resolves to the same mapping
+        assert _anchor_scale_shift(abbr, (8,), (4,), 1) == (scale, shift)
+
+
+def test_anchor_unknown_raises():
+    from fastfields.dlpack import anchor_scale_shift as _anchor_scale_shift
+
+    with pytest.raises(ValueError, match="anchor"):
+        _anchor_scale_shift("nope", (8,), (4,), 1)
+    with pytest.raises(ValueError, match="anchor"):
+        ff.resample(np.arange(8, dtype=np.float64), shape=4, anchor="nope")
+
+
+@pytest.mark.parametrize(
+    "anchor,expected",
+    [
+        # linear interp of the ramp arange(8) reproduces the sampled
+        # input-coordinate; all coords below stay inside [0, 7].
+        ("centers", np.linspace(0, 7, 4)),
+        ("first", [0.0, 2.0, 4.0, 6.0]),
+        ("edges", [0.5, 2.5, 4.5, 6.5]),
+        ("last", [1.0, 3.0, 5.0, 7.0]),
+    ],
+)
+def test_resample_anchor_matches_grid(anchor, expected):
+    x = np.arange(8, dtype=np.float64)
+    out = ff.resample(x, shape=4, order="linear", anchor=anchor)
+    assert out.shape == (4,)
+    np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_resample_default_anchor_is_centers():
+    x = np.arange(8, dtype=np.float64)
+    default = ff.resample(x, shape=4, order="linear")
+    centers = ff.resample(x, shape=4, order="linear", anchor="centers")
+    np.testing.assert_array_equal(default, centers)
+
+
+def test_resample_scale_overrides_anchor():
+    # An explicit scale overrides the anchor-derived scale; scale=in/out with
+    # shift=0 reproduces the 'first' grid regardless of the anchor.
+    x = np.arange(8, dtype=np.float64)
+    override = ff.resample(
+        x, shape=4, order="linear", anchor="centers", scale=[2.0], shift=0.0
+    )
+    first = ff.resample(x, shape=4, order="linear", anchor="first")
+    np.testing.assert_allclose(override, first, rtol=1e-6, atol=1e-6)
+
+
+def test_resample_scale_wrong_length_raises():
+    x = np.arange(8, dtype=np.float64)
+    with pytest.raises(ValueError, match="scale"):
+        ff.resample(x, shape=4, ndim=1, scale=[2.0, 2.0])
+
+
+def test_resample_shift_overrides_anchor():
+    x = np.arange(8, dtype=np.float64)
+    # explicit shift=0 turns 'last' (shift 1) into the 'first' grid (shift 0),
+    # since both use the in/out scale.
+    override = ff.resample(
+        x, shape=4, order="linear", anchor="last", shift=0.0
+    )
+    first = ff.resample(x, shape=4, order="linear", anchor="first")
+    np.testing.assert_allclose(override, first, rtol=1e-6, atol=1e-6)
+
+
+# --------------------------------------------------------------------------- #
 # argument normalisation                                                      #
 # --------------------------------------------------------------------------- #
 
@@ -343,3 +502,421 @@ def test_inplace_rejects_non_array_and_bad_dtype():
         ff.dt_euclidean(
             np.zeros(4, dtype=np.int32), inplace=True
         )  # wrong dtype
+
+
+# --------------------------------------------------------------------------- #
+# pushpull (spline gather / scatter)                                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_pull_linear_interpolation():
+    inp = np.array([[0.0], [10.0], [20.0], [30.0]])  # (4, 1) ramp
+    grid = np.array([[0.5], [1.5], [2.5]])  # (3, 1) between voxels
+    out = ff.pull(inp, grid, order=1)
+    np.testing.assert_allclose(out[:, 0], [5.0, 15.0, 25.0])
+
+
+def test_count_identity_is_ones():
+    grid = np.arange(5.0).reshape(5, 1)
+    np.testing.assert_allclose(ff.count(grid, shape=5, order=1)[:, 0], 1.0)
+
+
+def test_push_is_pull_adjoint():
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((6, 1))
+    y = rng.standard_normal((4, 1))
+    grid = np.linspace(0, 5, 4).reshape(4, 1)
+    px = ff.pull(x, grid, order=2)
+    py = ff.push(y, grid, shape=6, order=2)
+    np.testing.assert_allclose(
+        float((px * y).sum()), float((x * py).sum()), rtol=1e-8, atol=1e-8
+    )
+
+
+def test_grad_of_ramp_is_constant_slope():
+    inp = np.array([[0.0], [10.0], [20.0], [30.0]])
+    grid = np.array([[0.5], [1.5], [2.5]])
+    g = ff.grad(inp, grid, order=1)  # (3, 1, 1)
+    np.testing.assert_allclose(g[:, 0, 0], 10.0)
+
+
+# --------------------------------------------------------------------------- #
+# regularisers                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_field_matvec_absolute_is_per_channel_scaling():
+    rng = np.random.default_rng(1)
+    inp = rng.standard_normal((8, 2))
+    out = ff.field_matvec(inp, absolute=[2.0, 3.0], ndim=1)
+    np.testing.assert_allclose(out[:, 0], 2.0 * inp[:, 0])
+    np.testing.assert_allclose(out[:, 1], 3.0 * inp[:, 1])
+
+
+def test_field_diag_absolute():
+    d = ff.field_diag((8, 2), absolute=2.0, ndim=1)
+    np.testing.assert_allclose(d, 2.0)
+
+
+def test_flow_matvec_absolute_is_scaling():
+    rng = np.random.default_rng(2)
+    inp = rng.standard_normal((8, 1))
+    np.testing.assert_allclose(
+        ff.flow_matvec(inp, absolute=2.5, ndim=1), 2.5 * inp
+    )
+
+
+def test_field_penalty_wrong_length_raises():
+    with pytest.raises(ValueError):
+        ff.field_matvec(np.zeros((4, 2)), absolute=[1.0, 2.0, 3.0], ndim=1)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"membrane": 1.0},
+        {"shears": 1.0, "div": 0.5},
+        {
+            "absolute": 0.3,
+            "membrane": 0.7,
+            "bending": 0.4,
+            "shears": 1.0,
+            "div": 0.5,
+        },
+    ],
+)
+def test_flow_relax_solves_system(kw):
+    # relaxation drives (H + L) x -> g; with a strong diagonal Hessian the
+    # Gauss-Seidel sweeps converge. Residual recomputes L x via flow_matvec.
+    rng = np.random.default_rng(4)
+    H, W, hdiag = 6, 7, 6.0
+    hes = np.zeros((H, W, 3))
+    hes[..., 0] = hdiag
+    hes[..., 1] = hdiag
+    grd = rng.standard_normal((H, W, 2))
+    x = ff.flow_relax(np.zeros((H, W, 2)), hes, grd, ndim=2, nb_iter=150, **kw)
+    lx = ff.flow_matvec(x, ndim=2, **kw)
+    rel = np.linalg.norm(hdiag * x + lx - grd) / np.linalg.norm(grd)
+    assert rel < 3e-3
+
+
+@pytest.mark.parametrize("bound", ["dct2", "dft"])
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"shears": 1.0},
+        {"div": 1.0},
+        {
+            "absolute": 0.3,
+            "membrane": 0.5,
+            "bending": 0.4,
+            "shears": 1.3,
+            "div": 0.7,
+        },
+    ],
+)
+def test_flow_matvec_lame_is_self_adjoint(kw, bound):
+    # The linear-elastic (shears/div) flow operator must be self-adjoint
+    # (SPD) under every boundary, including the reflecting DCT2 case.
+    rng = np.random.default_rng(3)
+    x = rng.standard_normal((5, 6, 2))
+    y = rng.standard_normal((5, 6, 2))
+    lx = ff.flow_matvec(x, ndim=2, bound=bound, **kw)
+    ly = ff.flow_matvec(y, ndim=2, bound=bound, **kw)
+    np.testing.assert_allclose((lx * y).sum(), (x * ly).sum(), rtol=1e-6)
+
+
+def _flow_hessian_2d(H, W, seed):
+    """Per-voxel SPD 2x2 Hessian, packed compact-symmetric -> (H, W, 3)."""
+    mats = _random_symmetric(H * W, 2, seed, posdef=True)
+    return _pack_symmetric(mats).reshape(H, W, 3)
+
+
+@pytest.mark.parametrize(
+    "kw,is_matrix,width",
+    [
+        ({"absolute": 2.5}, False, 1),
+        ({"membrane": 1.0}, False, 3),
+        ({"bending": 1.0}, False, 5),
+        ({"shears": 1.3, "div": 0.7}, True, 3),
+        (
+            {
+                "absolute": 0.3,
+                "membrane": 0.5,
+                "bending": 0.4,
+                "shears": 1.3,
+                "div": 0.7,
+            },
+            True,
+            5,
+        ),
+    ],
+)
+def test_flow_kernel_is_matvec_impulse_response(kw, is_matrix, width):
+    # The materialised stencil equals flow_matvec's impulse response in the
+    # interior (translation-invariant there).
+    C = 2
+    K = ff.flow_kernel(2, **kw)
+    assert K.shape == (
+        (width, width, C, C) if is_matrix else (width, width, C)
+    )
+    kd = width
+    N, cc, half = 2 * kd + 1, kd, kd // 2
+    for j0 in range(C):
+        x = np.zeros((N, N, C))
+        x[cc, cc, j0] = 1.0
+        o = ff.flow_matvec(x, ndim=2, **kw)
+        for a in range(kd):
+            for b in range(kd):
+                for i in range(C):
+                    got = o[cc + a - half, cc + b - half, i]
+                    kern = (
+                        K[a, b, i, j0]
+                        if is_matrix
+                        else (K[a, b, i] if i == j0 else 0.0)
+                    )
+                    np.testing.assert_allclose(got, kern, atol=1e-10)
+
+
+def test_flow_forward_is_sym_matvec_plus_flow_matvec():
+    # (M + R) v == M v + R v, by construction.
+    rng = np.random.default_rng(11)
+    H, W = 5, 6
+    mat = _flow_hessian_2d(H, W, 11)
+    vec = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5)
+    fwd = ff.flow_forward(mat, vec, ndim=2, **kw)
+    expect = ff.sym_matvec(mat, vec) + ff.flow_matvec(vec, ndim=2, **kw)
+    np.testing.assert_allclose(fwd, expect, rtol=1e-6, atol=1e-6)
+
+
+def test_flow_precond_solves_diagonal_system():
+    # x = (M + diag(R)) \ v  =>  M x + diag(R) x == v.
+    rng = np.random.default_rng(12)
+    H, W = 5, 6
+    mat = _flow_hessian_2d(H, W, 12)
+    vec = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5)
+    x = ff.flow_precond(mat, vec, ndim=2, **kw)
+    diag = ff.flow_diag(vec.shape, ndim=2, **kw)
+    residual = ff.sym_matvec(mat, x) + diag * x - vec
+    np.testing.assert_allclose(residual, 0.0, atol=1e-5)
+
+
+def test_flow_matvec_accumulate_variants():
+    rng = np.random.default_rng(21)
+    H, W = 5, 6
+    flow = rng.standard_normal((H, W, 2))
+    base = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+    L = ff.flow_matvec(flow, **kw)
+    # fresh-array forms
+    np.testing.assert_allclose(ff.flow_addmatvec(base, flow, **kw), base + L)
+    np.testing.assert_allclose(ff.flow_submatvec(base, flow, **kw), base - L)
+    # in-place forms mutate and return the same array
+    a = base.copy()
+    r = ff.flow_addmatvec_(a, flow, **kw)
+    assert r is a
+    np.testing.assert_allclose(a, base + L)
+    s = base.copy()
+    r = ff.flow_submatvec_(s, flow, **kw)
+    assert r is s
+    np.testing.assert_allclose(s, base - L)
+
+
+def test_flow_diag_accumulate_variants():
+    rng = np.random.default_rng(22)
+    H, W = 5, 6
+    base = rng.standard_normal((H, W, 2))
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+    d = ff.flow_diag(base.shape, **kw)
+    np.testing.assert_allclose(ff.flow_adddiag(base, **kw), base + d)
+    np.testing.assert_allclose(ff.flow_subdiag(base, **kw), base - d)
+    a = base.copy()
+    assert ff.flow_adddiag_(a, **kw) is a
+    np.testing.assert_allclose(a, base + d)
+    s = base.copy()
+    assert ff.flow_subdiag_(s, **kw) is s
+    np.testing.assert_allclose(s, base - d)
+
+
+def _field_hessian(shape_spatial, C, seed):
+    """Per-voxel SPD C×C Hessian, packed compact-symmetric."""
+    n = int(np.prod(shape_spatial))
+    mats = _random_symmetric(n, C, seed, posdef=True)
+    packed = _pack_symmetric(mats)
+    return packed.reshape(*shape_spatial, C * (C + 1) // 2)
+
+
+def test_field_forward_is_sym_matvec_plus_field_matvec():
+    rng = np.random.default_rng(31)
+    H, W, C = 5, 6, 2
+    mat = _field_hessian((H, W), C, 31)
+    vec = rng.standard_normal((H, W, C))
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    fwd = ff.field_forward(mat, vec, **kw)
+    expect = ff.sym_matvec(mat, vec) + ff.field_matvec(vec, **kw)
+    np.testing.assert_allclose(fwd, expect, rtol=1e-6, atol=1e-6)
+
+
+def test_field_precond_solves_diagonal_system():
+    rng = np.random.default_rng(32)
+    H, W, C = 5, 6, 2
+    mat = _field_hessian((H, W), C, 32)
+    vec = rng.standard_normal((H, W, C))
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    x = ff.field_precond(mat, vec, **kw)
+    diag = ff.field_diag(vec.shape, **kw)
+    residual = ff.sym_matvec(mat, x) + diag * x - vec
+    np.testing.assert_allclose(residual, 0.0, atol=1e-5)
+
+
+def test_field_accumulate_variants():
+    rng = np.random.default_rng(33)
+    H, W, C = 5, 6, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    L = ff.field_matvec(field, **kw)
+    d = ff.field_diag(base.shape, **kw)
+    np.testing.assert_allclose(ff.field_addmatvec(base, field, **kw), base + L)
+    np.testing.assert_allclose(ff.field_submatvec(base, field, **kw), base - L)
+    np.testing.assert_allclose(ff.field_adddiag(base, **kw), base + d)
+    np.testing.assert_allclose(ff.field_subdiag(base, **kw), base - d)
+    a = base.copy()
+    assert ff.field_addmatvec_(a, field, **kw) is a
+    np.testing.assert_allclose(a, base + L)
+    s = base.copy()
+    assert ff.field_subdiag_(s, **kw) is s
+    np.testing.assert_allclose(s, base - d)
+
+
+@pytest.mark.parametrize(
+    "order,width,kw",
+    [
+        (1, 1, dict(absolute=[2.5, 1.5])),
+        (2, 3, dict(absolute=[0.3, 0.4], membrane=[1.0, 0.7])),
+        (
+            3,
+            5,
+            dict(absolute=[0.3, 0.4], membrane=[0.5, 0.6], bending=[1.0, 0.8]),
+        ),
+    ],
+)
+def test_field_kernel_is_matvec_impulse_response(order, width, kw):
+    # The per-channel field stencil equals field_matvec's impulse response in
+    # the interior (channels are independent).
+    C = 2
+    K = ff.field_kernel(2, **kw)
+    assert K.shape == (width, width, C)
+    kd = width
+    N, cc, half = 2 * kd + 1, kd, kd // 2
+    for c0 in range(C):
+        x = np.zeros((N, N, C))
+        x[cc, cc, c0] = 1.0
+        o = ff.field_matvec(x, ndim=2, **kw)
+        for a in range(kd):
+            for b in range(kd):
+                for c in range(C):
+                    got = o[cc + a - half, cc + b - half, c]
+                    kern = K[a, b, c] if c == c0 else 0.0
+                    np.testing.assert_allclose(got, kern, atol=1e-10)
+
+
+def test_field_kernel_channels_from_penalty_length():
+    # C is inferred from the per-channel penalty length; `channels` overrides.
+    assert ff.field_kernel(2, absolute=[1.0, 2.0, 3.0]).shape == (1, 1, 3)
+    assert ff.field_kernel(1, absolute=2.0, channels=4).shape == (1, 4)
+    assert ff.field_kernel(2, membrane=[1.0]).shape == (3, 3, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Accumulate ops: one in-place kernel, two spellings                          #
+#                                                                             #
+# The C primitive is in-place only; the out-of-place spelling copies first and#
+# runs the same primitive. These tests pin both halves of that contract.      #
+# --------------------------------------------------------------------------- #
+
+
+_ACC_FIELD_KW = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+_ACC_FLOW_KW = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+
+
+def test_out_of_place_accumulate_does_not_mutate_input():
+    rng = np.random.default_rng(11)
+    H, W, C = 4, 5, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    before = base.copy()
+    for fn in (ff.field_addmatvec, ff.field_submatvec):
+        out = fn(base, field, **_ACC_FIELD_KW)
+        np.testing.assert_array_equal(base, before)
+        assert out is not base
+    for fn in (ff.field_adddiag, ff.field_subdiag):
+        out = fn(base, **_ACC_FIELD_KW)
+        np.testing.assert_array_equal(base, before)
+        assert out is not base
+
+
+def test_inplace_accumulate_mutates_and_returns_same_array():
+    rng = np.random.default_rng(12)
+    H, W, C = 4, 5, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    a = base.copy()
+    assert ff.field_addmatvec_(a, field, **_ACC_FIELD_KW) is a
+    assert not np.array_equal(a, base)
+
+
+def test_inplace_and_out_of_place_agree_field():
+    rng = np.random.default_rng(13)
+    H, W, C = 4, 5, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    a = base.copy()
+    ff.field_addmatvec_(a, field, **_ACC_FIELD_KW)
+    b = ff.field_addmatvec(base, field, **_ACC_FIELD_KW)
+    np.testing.assert_array_equal(a, b)
+
+    a = base.copy()
+    ff.field_subdiag_(a, **_ACC_FIELD_KW)
+    b = ff.field_subdiag(base, **_ACC_FIELD_KW)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_inplace_and_out_of_place_agree_flow():
+    rng = np.random.default_rng(14)
+    H, W = 5, 6
+    flow = rng.standard_normal((H, W, 2))
+    base = rng.standard_normal((H, W, 2))
+    a = base.copy()
+    ff.flow_submatvec_(a, flow, **_ACC_FLOW_KW)
+    b = ff.flow_submatvec(base, flow, **_ACC_FLOW_KW)
+    np.testing.assert_array_equal(a, b)
+
+    a = base.copy()
+    ff.flow_adddiag_(a, **_ACC_FLOW_KW)
+    b = ff.flow_adddiag(base, **_ACC_FLOW_KW)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_accumulate_matches_reference_composition():
+    """The fused primitive must equal the naive `base +/- L(x)` composition."""
+    rng = np.random.default_rng(15)
+    H, W, C = 5, 6, 2
+    field = rng.standard_normal((H, W, C))
+    base = rng.standard_normal((H, W, C))
+    L = ff.field_matvec(field, **_ACC_FIELD_KW)
+    np.testing.assert_allclose(
+        ff.field_addmatvec(base, field, **_ACC_FIELD_KW), base + L, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        ff.field_submatvec(base, field, **_ACC_FIELD_KW), base - L, atol=1e-12
+    )
+    d = ff.field_diag(base.shape, **_ACC_FIELD_KW)
+    np.testing.assert_allclose(
+        ff.field_adddiag(base, **_ACC_FIELD_KW), base + d, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        ff.field_subdiag(base, **_ACC_FIELD_KW), base - d, atol=1e-12
+    )
