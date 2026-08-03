@@ -35,6 +35,7 @@ __all__ = [
     "field_subdiag",
     "field_subdiag_",
     "field_kernel",
+    "field_relax",
     "field_precond",
     "field_forward",
     "flow_matvec",
@@ -323,6 +324,46 @@ def field_diag(
         ndim=ndim,
     )
     return out
+
+
+def field_relax(
+    field: np.ndarray,
+    hes: np.ndarray,
+    grd: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+    nb_iter: int = 1,
+) -> np.ndarray:
+    """Refine ``field`` in place with ``nb_iter`` relaxation sweeps.
+
+    Solves ``(H + L) x = g`` where ``H`` is the per-voxel compact-symmetric
+    Hessian ``hes`` (packed ``C*(C+1)/2`` last axis), ``L`` the field
+    regulariser (same per-channel penalties as :func:`field_matvec`), and
+    ``g`` the gradient ``grd``. ``field`` is the warm start, mutated in place
+    and returned.
+    """
+    field = _as_float_array(field, "field")
+    hes = _as_float_array(hes, "hes")
+    grd = _as_float_array(grd, "grd")
+    channels = field.shape[-1]
+    _ff.field_relax(
+        field,
+        hes,
+        grd,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+        nb_iter=int(nb_iter),
+    )
+    return field
 
 
 def flow_matvec(
