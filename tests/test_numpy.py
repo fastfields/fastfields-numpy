@@ -948,6 +948,102 @@ def test_field_kernel_channels_from_penalty_length():
 
 
 # --------------------------------------------------------------------------- #
+# RLS/JRLS-weighted field regulariser                                         #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"absolute": [1.75, 0.9]},
+        {"absolute": [0.3, 0.4], "membrane": [1.0, 0.7]},
+        {
+            "absolute": [0.3, 0.4],
+            "membrane": [0.5, 0.6],
+            "bending": [1.0, 0.8],
+        },
+    ],
+)
+def test_field_matvec_rls_unit_weight_matches_field_matvec(kw):
+    # An all-ones weight map degenerates the weighted operator to the plain
+    # one, for both the RLS (wc=1) and JRLS (wc=C) weight shapes.
+    rng = np.random.default_rng(41)
+    H, W, C = 6, 7, 2
+    x = rng.standard_normal((H, W, C))
+    expect = ff.field_matvec(x, ndim=2, **kw)
+    for wc in (1, C):
+        wgt = np.ones((H, W, wc))
+        got = ff.field_matvec_rls(x, wgt, ndim=2, **kw)
+        np.testing.assert_allclose(got, expect, atol=1e-10)
+
+
+def test_field_diag_rls_matches_matvec_rls_on_impulse():
+    rng = np.random.default_rng(42)
+    H, W, C = 6, 7, 2
+    kw = dict(absolute=[0.3, 0.4], membrane=[1.0, 0.7], ndim=2)
+    wgt = 0.5 + np.abs(rng.standard_normal((H, W, 1)))
+    d = ff.field_diag_rls(wgt, **kw)
+    assert d.shape == (H, W, C)
+    i, j, c = 3, 3, 1
+    e = np.zeros((H, W, C))
+    e[i, j, c] = 1.0
+    o = ff.field_matvec_rls(e, wgt, **kw)
+    np.testing.assert_allclose(d[i, j, c], o[i, j, c], atol=1e-8)
+
+
+def test_field_matvec_rls_jrls_per_channel_decomposes():
+    # The field regulariser never couples channels, so a genuine per-channel
+    # weight map (wc == C) must decompose into C independent single-channel
+    # problems, each solvable through the wc == 1 path -- an independent
+    # ground truth, mirroring fastfields-cpu-lib's
+    # run_2d_rls_jrls_per_channel (regression oracle for cpu-lib#65).
+    rng = np.random.default_rng(43)
+    H, W, C = 6, 7, 2
+    kw = dict(
+        absolute=[0.3, 0.4], membrane=[1.0, 0.7], bending=[0.5, 0.6], ndim=2
+    )
+    x = rng.standard_normal((H, W, C))
+    wgt = 0.5 + np.abs(rng.standard_normal((H, W, C)))
+    Lx = ff.field_matvec_rls(x, wgt, **kw)
+    for c in range(C):
+        kwc = {k: [v[c]] for k, v in kw.items() if k != "ndim"}
+        kwc["ndim"] = 2
+        xc = x[..., c : c + 1]
+        wc = wgt[..., c : c + 1]
+        Lc = ff.field_matvec_rls(xc, wc, **kwc)
+        np.testing.assert_allclose(Lx[..., c : c + 1], Lc, atol=1e-8)
+
+
+def test_field_relax_rls_solves_system():
+    # Mirrors test_field_relax_solves_system, through the weighted operator
+    # with an all-ones weight map (reduces to the unweighted system).
+    rng = np.random.default_rng(44)
+    H, W, C, hdiag = 6, 7, 2, 6.0
+    kw = dict(absolute=[0.3, 0.4], membrane=[0.7, 0.5], ndim=2)
+    hes = np.zeros((H, W, C * (C + 1) // 2))
+    hes[..., 0] = hdiag
+    hes[..., 1] = hdiag
+    grd = rng.standard_normal((H, W, C))
+    wgt = np.ones((H, W, 1))
+    x = ff.field_relax_rls(
+        np.zeros((H, W, C)), hes, grd, wgt, nb_iter=250, **kw
+    )
+    lx = ff.field_matvec_rls(x, wgt, **kw)
+    rel = np.linalg.norm(hdiag * x + lx - grd) / np.linalg.norm(grd)
+    assert rel < 3e-3
+
+
+def test_field_relax_rls_is_in_place():
+    sol = np.zeros((6, 6, 2))
+    hes = _field_hessian((6, 6), 2, 45)
+    grd = np.ones((6, 6, 2))
+    wgt = np.ones((6, 6, 1))
+    out = ff.field_relax_rls(sol, hes, grd, wgt, membrane=1.0, ndim=2, nb_iter=4)
+    assert out is sol
+    assert np.any(sol != 0.0)
+
+
+# --------------------------------------------------------------------------- #
 # Accumulate ops: one in-place kernel, two spellings                          #
 #                                                                             #
 # The C primitive is in-place only; the out-of-place spelling copies first and#
