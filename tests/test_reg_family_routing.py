@@ -39,6 +39,11 @@ def _hes():
     return np.ones((6, 6, 6, NDIM * (NDIM + 1) // 2), dtype=np.float64)
 
 
+def _wgt():
+    # RLS weight map (trailing dim 1, shared across channels).
+    return np.ones((6, 6, 6, 1), dtype=np.float64)
+
+
 # Every public field_*/flow_* wrapper, with a call that reaches the C layer.
 _CASES = {
     "field_matvec": lambda: ff.field_matvec(
@@ -79,6 +84,21 @@ _CASES = {
     ),
     "field_adddiag_": lambda: ff.field_adddiag_(
         _x(), membrane=1.0, voxel_size=VS, ndim=NDIM
+    ),
+    "field_matvec_rls": lambda: ff.field_matvec_rls(
+        _x(), _wgt(), membrane=1.0, voxel_size=VS, ndim=NDIM
+    ),
+    "field_diag_rls": lambda: ff.field_diag_rls(
+        _wgt(), membrane=1.0, channels=NDIM, voxel_size=VS, ndim=NDIM
+    ),
+    "field_relax_rls": lambda: ff.field_relax_rls(
+        _x(),
+        _hes(),
+        np.ones(SHAPE),
+        _wgt(),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
     ),
     "field_subdiag_": lambda: ff.field_subdiag_(
         _x(), membrane=1.0, voxel_size=VS, ndim=NDIM

@@ -36,6 +36,9 @@ __all__ = [
     "field_subdiag_",
     "field_kernel",
     "field_relax",
+    "field_matvec_rls",
+    "field_diag_rls",
+    "field_relax_rls",
     "field_precond",
     "field_forward",
     "flow_matvec",
@@ -355,6 +358,126 @@ def field_relax(
         field,
         hes,
         grd,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+        nb_iter=int(nb_iter),
+    )
+    return field
+
+
+def field_matvec_rls(
+    inp: np.ndarray,
+    wgt: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """RLS/JRLS-weighted variant of :func:`field_matvec`.
+
+    ``wgt`` has shape ``(*batch, *spatial, 1)`` for a single weight shared
+    across all channels (RLS), or ``(*batch, *spatial, C)`` for a genuine
+    per-channel weight (JRLS, ``C`` matching ``inp``'s channel count) --
+    the trailing dimension of ``wgt`` selects which mode is used. Same
+    shape/penalty conventions as :func:`field_matvec` otherwise.
+    """
+    inp = _as_float_array(inp, "inp")
+    wgt = _as_float_array(wgt, "wgt")
+    channels = inp.shape[-1]
+    out = np.zeros_like(inp)
+    _ff.field_matvec_rls(
+        out,
+        inp,
+        wgt,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return out
+
+
+def field_diag_rls(
+    wgt: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    channels: int | None = None,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+    dtype: np.dtype = np.float64,
+) -> np.ndarray:
+    """Diagonal (preconditioner) of :func:`field_matvec_rls`.
+
+    ``wgt`` selects RLS (trailing dim 1) vs JRLS (trailing dim ``C``), same
+    as :func:`field_matvec_rls`. The output channel count ``C`` is taken
+    from ``channels`` if given, else from ``wgt``'s trailing dimension when
+    it is not 1 (JRLS), else inferred from the per-channel penalty lengths
+    (default 1) exactly as :func:`field_kernel` does.
+    """
+    wgt = _as_float_array(wgt, "wgt")
+    if channels is None:
+        channels = (
+            wgt.shape[-1]
+            if wgt.shape[-1] != 1
+            else _field_channels(None, absolute, membrane, bending)
+        )
+    out = np.zeros(wgt.shape[:-1] + (channels,), dtype=dtype)
+    _ff.field_diag_rls(
+        out,
+        wgt,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=_per_channel(absolute, channels, "absolute"),
+        membrane=_per_channel(membrane, channels, "membrane"),
+        bending=_per_channel(bending, channels, "bending"),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return out
+
+
+def field_relax_rls(
+    field: np.ndarray,
+    hes: np.ndarray,
+    grd: np.ndarray,
+    wgt: np.ndarray,
+    absolute: float | Sequence[float] | None = None,
+    membrane: float | Sequence[float] | None = None,
+    bending: float | Sequence[float] | None = None,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+    nb_iter: int = 1,
+) -> np.ndarray:
+    """RLS/JRLS-weighted variant of :func:`field_relax`.
+
+    Refines ``field`` in place with ``nb_iter`` relaxation sweeps of
+    ``(H + L(w)) x = g``, where ``L(w)`` is the weighted field regulariser
+    (same ``wgt`` conventions as :func:`field_matvec_rls`). ``field`` is
+    the warm start, mutated in place and returned.
+    """
+    field = _as_float_array(field, "field")
+    hes = _as_float_array(hes, "hes")
+    grd = _as_float_array(grd, "grd")
+    wgt = _as_float_array(wgt, "wgt")
+    channels = field.shape[-1]
+    _ff.field_relax_rls(
+        field,
+        hes,
+        grd,
+        wgt,
         voxel_size=_voxel_size(voxel_size, ndim),
         absolute=_per_channel(absolute, channels, "absolute"),
         membrane=_per_channel(membrane, channels, "membrane"),
