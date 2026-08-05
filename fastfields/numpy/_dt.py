@@ -20,7 +20,9 @@ from ._util import (
 
 __all__ = [
     "dt_euclidean",
+    "dt_euclidean_",
     "dt_l1",
+    "dt_l1_",
     "dt_spline_table",
     "dt_spline_brent",
     "dt_spline_gaussnewton",
@@ -31,11 +33,17 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # distance transforms                                                         #
 # --------------------------------------------------------------------------- #
+#
+# Trailing-underscore wrappers operate in place / through the caller's buffer
+# and return it; this matches the ``_``-suffix convention already used by
+# sym_addmatvec_/sym_submatvec_ in this same package and by every in-place op
+# on the cupy backend (fastfields-cupy's ``dt_euclidean_``/``dt_l1_``). Earlier
+# revisions spelled this as an ``inplace=`` keyword instead of a dedicated
+# function; that was an accidental (not load-bearing) divergence from the
+# rest of the package and from cupy -- see fastfields#4.
 
 
-def dt_euclidean(
-    x: np.ndarray, voxel_spacing: float = 1.0, *, inplace: bool = False
-) -> np.ndarray:
+def dt_euclidean(x: np.ndarray, voxel_spacing: float = 1.0) -> np.ndarray:
     """Squared Euclidean distance transform along the **last** axis.
 
     Parameters
@@ -44,32 +52,45 @@ def dt_euclidean(
         Input holding ``0`` at feature locations and ``+inf`` elsewhere.
     voxel_spacing : float, default=1.0
         Physical spacing between samples along the last axis.
-    inplace : bool, default=False
-        If ``True``, modify ``x`` in place and return it (``x`` must then
-        already be a float32/float64 array; any memory layout is fine, the
-        write is zero-copy via DLPack strides).
 
     Returns
     -------
     numpy.ndarray
-        The distance transform (a new array unless ``inplace=True``).
+        The distance transform, a newly allocated array; ``x`` is left
+        untouched. See :func:`dt_euclidean_` for the in-place variant.
     """
-    if inplace:
-        _validate_inplace(x)
-        _ff.dt_euclidean(x, float(voxel_spacing))
-        return x
     out = _as_float_array(x, "x", copy=True)
     _ff.dt_euclidean(out, float(voxel_spacing))
     return out
 
 
-def dt_l1(
-    x: np.ndarray, voxel_spacing: float = 1.0, *, inplace: bool = False
-) -> np.ndarray:
+def dt_euclidean_(x: np.ndarray, voxel_spacing: float = 1.0) -> np.ndarray:
+    """In-place squared Euclidean distance transform along the **last** axis.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input holding ``0`` at feature locations and ``+inf`` elsewhere.
+        Must be a float32/float64 array; mutated in place and returned. Any
+        memory layout is fine -- the write is zero-copy via DLPack strides.
+    voxel_spacing : float, default=1.0
+        Physical spacing between samples along the last axis.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``x`` (the same array object), now holding the distance transform.
+    """
+    _validate_inplace(x)
+    _ff.dt_euclidean(x, float(voxel_spacing))
+    return x
+
+
+def dt_l1(x: np.ndarray, voxel_spacing: float = 1.0) -> np.ndarray:
     """L1 distance transform along the **last** axis.
 
-    See :func:`dt_euclidean` for the input convention and the
-    meaning of the parameters.
+    See :func:`dt_euclidean` for the input convention and the meaning of the
+    parameters.
 
     Parameters
     ----------
@@ -77,21 +98,37 @@ def dt_l1(
         Input holding ``0`` at feature locations and ``+inf`` elsewhere.
     voxel_spacing : float, default=1.0
         Physical spacing between samples along the last axis.
-    inplace : bool, default=False
-        Modify ``x`` in place and return it (see above).
 
     Returns
     -------
     numpy.ndarray
-        The distance transform (a new array unless ``inplace=True``).
+        The distance transform, a newly allocated array; ``x`` is left
+        untouched. See :func:`dt_l1_` for the in-place variant.
     """
-    if inplace:
-        _validate_inplace(x)
-        _ff.dt_l1(x, float(voxel_spacing))
-        return x
     out = _as_float_array(x, "x", copy=True)
     _ff.dt_l1(out, float(voxel_spacing))
     return out
+
+
+def dt_l1_(x: np.ndarray, voxel_spacing: float = 1.0) -> np.ndarray:
+    """In-place L1 distance transform along the **last** axis.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input holding ``0`` at feature locations and ``+inf`` elsewhere.
+        Must be a float32/float64 array; mutated in place and returned.
+    voxel_spacing : float, default=1.0
+        Physical spacing between samples along the last axis.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``x`` (the same array object), now holding the distance transform.
+    """
+    _validate_inplace(x)
+    _ff.dt_l1(x, float(voxel_spacing))
+    return x
 
 
 # --------------------------------------------------------------------------- #
@@ -279,12 +316,16 @@ def dt_mesh(
     loc: np.ndarray,
     vertices: np.ndarray,
     faces: np.ndarray,
-    *,
     signed: bool = True,
     naive: bool = False,
     return_nearest: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Point-to-triangular-mesh (squared) distance.
+
+    ``signed``/``naive``/``return_nearest`` are positional-or-keyword (not
+    keyword-only) to match the torch and cupy wrappers -- an earlier revision
+    made them keyword-only here only, which meant a positional call worked on
+    two backends and raised a ``TypeError`` on the third. See fastfields#4.
 
     Parameters
     ----------

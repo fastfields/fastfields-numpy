@@ -28,7 +28,9 @@ __all__ = [
     "sym_addmatvec_",
     "sym_submatvec_",
     "sym_solve",
+    "sym_solve_",
     "sym_invert",
+    "sym_invert_",
 ]
 
 
@@ -333,10 +335,96 @@ def sym_invert(mat: np.ndarray) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        The packed inverse, same shape as ``mat``.
+        The packed inverse, same shape as ``mat``. See :func:`sym_invert_`
+        for the in-place variant.
     """
     mat = _as_float_array(mat, "mat")
     # Output must be a real C-contiguous buffer even if ``mat`` is strided.
     out = np.empty(mat.shape, dtype=mat.dtype)
     _ff.sym_invert(out, mat)
     return out
+
+
+def sym_solve_(
+    inp_out: np.ndarray, mat: np.ndarray, weight: np.ndarray | None = None
+) -> np.ndarray:
+    """In-place solve ``inp_out = (H + diag(weight)) @ inp_out``.
+
+    Mirrors the cupy backend's ``sym_solve_``; there is no autograd concern
+    on numpy (unlike torch's ``sym_solve``, whose backward would need the
+    pre-mutation right-hand side if it were made in-place -- see
+    ``API_CONTRACT.md``), so numpy can expose the same trailing-underscore
+    in-place form cupy already does.
+
+    Parameters
+    ----------
+    inp_out : numpy.ndarray
+        Right-hand side on input, solution on output; trailing dim ``C``.
+        Mutated in place and returned. Must be a float32/float64 array; it
+        fixes the batch (leading) shape.
+    mat : numpy.ndarray
+        Compact-symmetric matrix, trailing dim ``C*(C+1)/2``. Broadcast to
+        ``inp_out``'s batch shape.
+    weight : numpy.ndarray, optional
+        Diagonal regulariser added to ``mat``, trailing dim ``C``. Broadcast
+        to ``inp_out``'s batch shape.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``inp_out`` (the same array object), now holding the solution.
+
+    Raises
+    ------
+    TypeError
+        If ``inp_out`` is not a float32/float64 numpy array.
+    ValueError
+        If ``mat``/``weight`` cannot be broadcast to ``inp_out``'s batch
+        shape, or channel counts disagree.
+    """
+    inp_out = _validate_inplace(inp_out, "inp_out")
+    mat = _as_float_array(mat, "mat", dtype=inp_out.dtype)
+    c = sym_channels_from_packed(mat.shape[-1])
+    if inp_out.shape[-1] != c:
+        raise ValueError(
+            f"inp_out has {inp_out.shape[-1]} channels but the packed "
+            f"matrix encodes {c} channels"
+        )
+    batch = inp_out.shape[:-1]
+    mat_b = _bcast_view(mat, batch + (mat.shape[-1],))
+    if weight is None:
+        _ff.sym_solve_(inp_out, mat_b, None)
+    else:
+        weight = _as_float_array(weight, "weight", dtype=inp_out.dtype)
+        if weight.shape[-1] != c:
+            raise ValueError(
+                f"weight has {weight.shape[-1]} channels but the packed "
+                f"matrix encodes {c} channels"
+            )
+        weight_b = _bcast_view(weight, batch + (c,))
+        _ff.sym_solve_(inp_out, mat_b, weight_b)
+    return inp_out
+
+
+def sym_invert_(mat: np.ndarray) -> np.ndarray:
+    """In-place invert a compact-symmetric packed matrix.
+
+    Mirrors the cupy backend's ``sym_invert_``. Not exposed on torch: the
+    inverse is nonlinear in ``mat`` and ``sym_invert`` is not differentiable
+    there at all (see ``API_CONTRACT.md``). numpy has no autograd concern, so
+    the same in-place form cupy exposes is safe here.
+
+    Parameters
+    ----------
+    mat : numpy.ndarray
+        Compact-symmetric matrix, trailing dim ``C*(C+1)/2``. Must be a
+        float32/float64 array; mutated in place and returned.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``mat`` (the same array object), now holding its packed inverse.
+    """
+    _validate_inplace(mat, "mat")
+    _ff.sym_invert_(mat)
+    return mat

@@ -17,17 +17,14 @@ from ._util import _as_bound, _as_float_array, _as_spline, _validate_inplace
 
 __all__ = [
     "spline_coeff",
+    "spline_coeff_",
     "resample",
     "restriction",
 ]
 
 
 def spline_coeff(
-    x: np.ndarray,
-    order: int | str = 3,
-    bound: int | str = "dct2",
-    *,
-    inplace: bool = False,
+    x: np.ndarray, order: int | str = 3, bound: int | str = "dct2"
 ) -> np.ndarray:
     """Spline-coefficient prefilter along the **last** axis.
 
@@ -39,23 +36,41 @@ def spline_coeff(
         Spline order (orders 0 and 1 are no-ops).
     bound : int or str, default="dct2"
         Boundary condition.
-    inplace : bool, default=False
-        If ``True``, modify ``x`` in place and return it.
 
     Returns
     -------
     numpy.ndarray
-        Spline coefficients (a new array unless ``inplace=True``).
+        Spline coefficients, a newly allocated array; ``x`` is left
+        untouched. See :func:`spline_coeff_` for the in-place variant.
     """
-    spline = _as_spline(order)
-    bnd = _as_bound(bound)
-    if inplace:
-        _validate_inplace(x)
-        _ff.spline_coeff(x, spline, bnd)
-        return x
     out = _as_float_array(x, "x", copy=True)
-    _ff.spline_coeff(out, spline, bnd)
+    _ff.spline_coeff(out, _as_spline(order), _as_bound(bound))
     return out
+
+
+def spline_coeff_(
+    x: np.ndarray, order: int | str = 3, bound: int | str = "dct2"
+) -> np.ndarray:
+    """In-place spline-coefficient prefilter along the **last** axis.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input samples. Must be a float32/float64 array; mutated in place and
+        returned.
+    order : int or str, default=3
+        Spline order (orders 0 and 1 are no-ops).
+    bound : int or str, default="dct2"
+        Boundary condition.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``x`` (the same array object), now holding the spline coefficients.
+    """
+    _validate_inplace(x)
+    _ff.spline_coeff(x, _as_spline(order), _as_bound(bound))
+    return x
 
 
 def _resize_shapes(
