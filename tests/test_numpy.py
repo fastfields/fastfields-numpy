@@ -54,6 +54,14 @@ def test_l1_matches_bruteforce(dtype):
     np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
 
 
+def test_l1_inplace_matches_out_of_place():
+    inp = np.array([[0, np.inf, np.inf, 0, np.inf]], dtype=np.float64)
+    expected = ff.dt_l1(inp, voxel_spacing=1.5)
+    ret = ff.dt_l1_(inp, 1.5)
+    assert ret is inp
+    np.testing.assert_allclose(inp, expected, rtol=1e-10, atol=1e-10)
+
+
 def test_dt_handles_noncontiguous_input():
     # Build a strided / transposed (non-C-contiguous) view; the wrapper must
     # copy it into a contiguous buffer and still produce the right answer.
@@ -82,9 +90,28 @@ def test_dt_handles_noncontiguous_input():
 def test_dt_inplace():
     inp = np.array([[0, np.inf, np.inf, 0, np.inf]], dtype=np.float32)
     ref = _dt_reference(inp, 1.0, lambda d: d * d)
-    ret = ff.dt_euclidean(inp, inplace=True)
+    ret = ff.dt_euclidean_(inp)
     assert ret is inp
     np.testing.assert_allclose(inp, ref, rtol=1e-5, atol=1e-5)
+
+
+def test_dt_mesh_signed_naive_return_nearest_are_not_keyword_only():
+    # `signed`/`naive`/`return_nearest` must be positional-or-keyword here,
+    # matching the torch/cupy wrappers -- an earlier revision made them
+    # keyword-only on numpy only, so a positional call worked on two backends
+    # and raised TypeError on the third (fastfields#4). This asserts the
+    # Python-level signature directly: dt_mesh's own shape-checking layer
+    # over the raw binding is separately known-unvalidated (see this
+    # package's module docstring / CLAUDE.md), so a full native round-trip
+    # isn't the right way to pin down a signature fix.
+    import inspect
+
+    sig = inspect.signature(ff.dt_mesh)
+    for name in ("signed", "naive", "return_nearest"):
+        assert sig.parameters[name].kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.POSITIONAL_ONLY,
+        ), f"{name} must not be keyword-only"
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +267,50 @@ def test_sym_solve_with_weight():
     np.testing.assert_allclose(x_rec, x, rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.parametrize("C", [2, 3])
+def test_sym_solve_inplace_matches_out_of_place(C):
+    # sym_solve_ mirrors the cupy backend: mutates the RHS in place and
+    # returns it. It must agree numerically with the functional sym_solve.
+    B = 5
+    mats = _random_symmetric(B, C, seed=30 + C, posdef=True)
+    packed = _pack_symmetric(mats)
+    x = np.random.default_rng(9 + C).standard_normal((B, C))
+    b = ff.sym_matvec(packed, x)
+
+    expected = ff.sym_solve(packed, b)
+    b_inplace = b.copy()
+    ret = ff.sym_solve_(b_inplace, packed)
+    assert ret is b_inplace
+    np.testing.assert_allclose(b_inplace, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_sym_solve_inplace_broadcasts_weight():
+    C, B = 3, 4
+    mats = _random_symmetric(1, C, seed=77, posdef=True)  # batch (1,)
+    packed = _pack_symmetric(mats)
+    w = np.abs(np.random.default_rng(3).standard_normal((B, C))) + 0.5
+    x = np.random.default_rng(4).standard_normal((B, C))
+
+    dense = np.broadcast_to(mats, (B, C, C))
+    b = np.einsum("bij,bj->bi", dense, x) + w * x
+    ret = ff.sym_solve_(b, packed, weight=w)
+    assert ret is b
+    np.testing.assert_allclose(b, x, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("C", [2, 3])
+def test_sym_invert_inplace_matches_out_of_place(C):
+    B = 4
+    mats = _random_symmetric(B, C, seed=40 + C, posdef=True)
+    packed = _pack_symmetric(mats)
+
+    expected = ff.sym_invert(packed)
+    packed_inplace = packed.copy()
+    ret = ff.sym_invert_(packed_inplace)
+    assert ret is packed_inplace
+    np.testing.assert_allclose(packed_inplace, expected, rtol=1e-6, atol=1e-6)
+
+
 # --------------------------------------------------------------------------- #
 # in-place add/sub matvec (C3: trailing-`_` must mutate the caller's array)   #
 # --------------------------------------------------------------------------- #
@@ -351,6 +422,14 @@ def test_spline_coeff_order1_noop():
     x = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
     out = ff.spline_coeff(x, order=1)
     np.testing.assert_allclose(out, x, rtol=1e-12, atol=1e-12)
+
+
+def test_spline_coeff_inplace_matches_out_of_place():
+    x = np.array([[1.0, 2.0, 3.0, 4.0, 5.0]], dtype=np.float64)
+    expected = ff.spline_coeff(x, order=3, bound="dct2")
+    ret = ff.spline_coeff_(x, order=3, bound="dct2")
+    assert ret is x
+    np.testing.assert_allclose(x, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_restriction_runs_and_shapes():
@@ -488,8 +567,8 @@ def test_inplace_noncontiguous(dtype):
     x = base[:, ::2]  # shape (3, 8), stride 2 (non-contig)
     assert not x.flags["C_CONTIGUOUS"]
     ref = np.ascontiguousarray(x)
-    ff.dt_euclidean(ref, inplace=True)
-    ret = ff.dt_euclidean(x, inplace=True)
+    ff.dt_euclidean_(ref)
+    ret = ff.dt_euclidean_(x)
     assert ret is x  # returned the same object
     assert np.allclose(x, ref)  # correct result on the strided view
     assert np.allclose(base[:, ::2], ref)  # write landed in the parent buffer
@@ -497,11 +576,9 @@ def test_inplace_noncontiguous(dtype):
 
 def test_inplace_rejects_non_array_and_bad_dtype():
     with pytest.raises(TypeError):
-        ff.dt_euclidean([0.0, 1.0], inplace=True)  # not ndarray
+        ff.dt_euclidean_([0.0, 1.0])  # not ndarray
     with pytest.raises(TypeError):
-        ff.dt_euclidean(
-            np.zeros(4, dtype=np.int32), inplace=True
-        )  # wrong dtype
+        ff.dt_euclidean_(np.zeros(4, dtype=np.int32))  # wrong dtype
 
 
 # --------------------------------------------------------------------------- #
