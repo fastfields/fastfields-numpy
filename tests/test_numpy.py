@@ -1038,7 +1038,9 @@ def test_field_relax_rls_is_in_place():
     hes = _field_hessian((6, 6), 2, 45)
     grd = np.ones((6, 6, 2))
     wgt = np.ones((6, 6, 1))
-    out = ff.field_relax_rls(sol, hes, grd, wgt, membrane=1.0, ndim=2, nb_iter=4)
+    out = ff.field_relax_rls(
+        sol, hes, grd, wgt, membrane=1.0, ndim=2, nb_iter=4
+    )
     assert out is sol
     assert np.any(sol != 0.0)
 
