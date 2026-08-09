@@ -966,7 +966,7 @@ def test_field_kernel_channels_from_penalty_length():
 )
 def test_field_matvec_rls_unit_weight_matches_field_matvec(kw):
     # An all-ones weight map degenerates the weighted operator to the plain
-    # one, for both the RLS (wc=1) and JRLS (wc=C) weight shapes.
+    # one, for both the JRLS (wc=1) and RLS (wc=C) weight shapes.
     rng = np.random.default_rng(41)
     H, W, C = 6, 7, 2
     x = rng.standard_normal((H, W, C))
