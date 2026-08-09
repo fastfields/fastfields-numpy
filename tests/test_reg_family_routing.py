@@ -40,7 +40,7 @@ def _hes():
 
 
 def _wgt():
-    # RLS weight map (trailing dim 1, shared across channels).
+    # JRLS weight map (trailing dim 1, shared across channels).
     return np.ones((6, 6, 6, 1), dtype=np.float64)
 
 

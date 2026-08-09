@@ -966,7 +966,7 @@ def test_field_kernel_channels_from_penalty_length():
 )
 def test_field_matvec_rls_unit_weight_matches_field_matvec(kw):
     # An all-ones weight map degenerates the weighted operator to the plain
-    # one, for both the RLS (wc=1) and JRLS (wc=C) weight shapes.
+    # one, for both the JRLS (wc=1) and RLS (wc=C) weight shapes.
     rng = np.random.default_rng(41)
     H, W, C = 6, 7, 2
     x = rng.standard_normal((H, W, C))
@@ -1038,7 +1038,9 @@ def test_field_relax_rls_is_in_place():
     hes = _field_hessian((6, 6), 2, 45)
     grd = np.ones((6, 6, 2))
     wgt = np.ones((6, 6, 1))
-    out = ff.field_relax_rls(sol, hes, grd, wgt, membrane=1.0, ndim=2, nb_iter=4)
+    out = ff.field_relax_rls(
+        sol, hes, grd, wgt, membrane=1.0, ndim=2, nb_iter=4
+    )
     assert out is sol
     assert np.any(sol != 0.0)
 
