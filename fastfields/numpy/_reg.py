@@ -53,6 +53,9 @@ __all__ = [
     "flow_subdiag_",
     "flow_kernel",
     "flow_relax",
+    "flow_matvec_rls",
+    "flow_diag_rls",
+    "flow_relax_rls",
     "flow_precond",
     "flow_forward",
 ]
@@ -628,6 +631,131 @@ def flow_relax(
         flow,
         hes,
         grd,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=float(absolute),
+        membrane=float(membrane),
+        bending=float(bending),
+        shears=float(shears),
+        div=float(div),
+        bound=_as_bound(bound),
+        ndim=ndim,
+        nb_iter=int(nb_iter),
+    )
+    return flow
+
+
+def flow_matvec_rls(
+    inp: np.ndarray,
+    wgt: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+) -> np.ndarray:
+    """RLS/JRLS-weighted variant of :func:`flow_matvec`.
+
+    ``wgt`` has shape ``(*batch, *spatial, 1)``: unlike the field family, the
+    flow weighting is always *joint* -- the trailing axis of a flow field
+    holds the components of one displacement vector, so a single weight is
+    shared across them. Same shape/penalty conventions as :func:`flow_matvec`
+    otherwise.
+
+    ``bending`` is **not supported** with weighting (no weighted bending
+    kernel exists, as in ``jitfields``); a non-zero value raises.
+    """
+    inp = _as_float_array(inp, "inp")
+    wgt = _as_float_array(wgt, "wgt")
+    out = np.zeros_like(inp)
+    _ff.flow_matvec_rls(
+        out,
+        inp,
+        wgt,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=float(absolute),
+        membrane=float(membrane),
+        bending=float(bending),
+        shears=float(shears),
+        div=float(div),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return out
+
+
+def flow_diag_rls(
+    wgt: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+    dtype: np.dtype = np.float64,
+) -> np.ndarray:
+    """Diagonal (preconditioner) of :func:`flow_matvec_rls`.
+
+    Unlike plain :func:`flow_diag`, which builds from a *shape*, this one is
+    driven by the weight map: the output is ``wgt.shape[:-1] + (ndim,)``,
+    since a flow field's channel count is ``ndim``. Same ``wgt`` conventions
+    as :func:`flow_matvec_rls`.
+    """
+    wgt = _as_float_array(wgt, "wgt")
+    out = np.zeros(wgt.shape[:-1] + (ndim,), dtype=dtype)
+    _ff.flow_diag_rls(
+        out,
+        wgt,
+        voxel_size=_voxel_size(voxel_size, ndim),
+        absolute=float(absolute),
+        membrane=float(membrane),
+        bending=float(bending),
+        shears=float(shears),
+        div=float(div),
+        bound=_as_bound(bound),
+        ndim=ndim,
+    )
+    return out
+
+
+def flow_relax_rls(
+    flow: np.ndarray,
+    hes: np.ndarray,
+    grd: np.ndarray,
+    wgt: np.ndarray,
+    absolute: float = 0.0,
+    membrane: float = 0.0,
+    bending: float = 0.0,
+    shears: float = 0.0,
+    div: float = 0.0,
+    *,
+    voxel_size: float | Sequence[float] | None = None,
+    bound: int | str = "dct2",
+    ndim: int = 1,
+    nb_iter: int = 1,
+) -> np.ndarray:
+    """RLS/JRLS-weighted variant of :func:`flow_relax`.
+
+    Refines ``flow`` in place with ``nb_iter`` relaxation sweeps of
+    ``(H + L(w)) x = g``, where ``L(w)`` is the weighted flow regulariser
+    (same ``wgt`` conventions as :func:`flow_matvec_rls`). ``flow`` is the
+    warm start, mutated in place and returned.
+    """
+    flow = _as_float_array(flow, "flow")
+    hes = _as_float_array(hes, "hes")
+    grd = _as_float_array(grd, "grd")
+    wgt = _as_float_array(wgt, "wgt")
+    _ff.flow_relax_rls(
+        flow,
+        hes,
+        grd,
+        wgt,
         voxel_size=_voxel_size(voxel_size, ndim),
         absolute=float(absolute),
         membrane=float(membrane),
