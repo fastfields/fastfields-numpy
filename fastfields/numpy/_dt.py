@@ -332,9 +332,9 @@ def dt_mesh(
     loc : numpy.ndarray
         Query points, shape ``(*B, D)``.
     vertices : numpy.ndarray
-        Mesh vertices, shape ``(*B, N, D)``.
+        Mesh vertices, shape ``(N, D)``.
     faces : numpy.ndarray
-        Triangle vertex indices, shape ``(*B, M, D)`` (cast to int64).
+        Triangle vertex indices, shape ``(M, D)`` (cast to int64).
     signed : bool, default=True
         Return signed distances.
     naive : bool, default=False
@@ -350,10 +350,20 @@ def dt_mesh(
         Nearest-vertex index per query point, only if ``return_nearest`` is
         ``True``.
 
+    Raises
+    ------
+    ValueError
+        If ``vertices`` or ``faces`` is not 2D.
+
     Notes
     -----
-    Batch dims (core dims ``(D,)``, ``(N, D)``, ``(M, D)``) are broadcast; the
-    outputs use the broadcast batch shape.
+    A **single** mesh is queried by an arbitrarily batched point set: only
+    ``loc`` carries batch dims, and the outputs take ``loc.shape[:-1]``. The
+    mesh operands are *not* broadcast against that batch -- ``vertices`` and
+    ``faces`` must be exactly ``(N, D)`` / ``(M, D)``, matching jitfields'
+    ``mesh_distance`` and the ``ff::dt_mesh`` contract. (An earlier revision
+    broadcast them to ``(*B, N, D)``, which the binding rejects outright; see
+    fastfields#32.)
     """
     loc = _as_float_array(loc, "loc")
     vertices = _as_float_array(vertices, "vertices", dtype=loc.dtype)
@@ -362,16 +372,22 @@ def dt_mesh(
     faces = np.asarray(faces, dtype=np.int64)
     if not faces.flags.writeable:
         faces = faces.copy()
-    batch, (loc_b, vert_b, faces_b) = _broadcast_batch(
-        [(loc, 1), (vertices, 2), (faces, 2)]
-    )
+    if vertices.ndim != 2:
+        raise ValueError(
+            "dt_mesh: vertices must be a 2D (N, D) array describing a single "
+            f"mesh, got shape {vertices.shape}"
+        )
+    if faces.ndim != 2:
+        raise ValueError(
+            "dt_mesh: faces must be a 2D (M, D) array describing a single "
+            f"mesh, got shape {faces.shape}"
+        )
+    batch = loc.shape[:-1]
     dist = np.empty(batch, dtype=loc.dtype)
     nearest = None
     if return_nearest:
         nearest = np.empty(batch, dtype=np.int64)
-    _ff.dt_mesh(
-        dist, nearest, loc_b, vert_b, faces_b, bool(signed), bool(naive)
-    )
+    _ff.dt_mesh(dist, nearest, loc, vertices, faces, bool(signed), bool(naive))
     if return_nearest:
         return dist, nearest
     return dist

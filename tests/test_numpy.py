@@ -115,6 +115,208 @@ def test_dt_mesh_signed_naive_return_nearest_are_not_keyword_only():
 
 
 # --------------------------------------------------------------------------- #
+# point-to-mesh distance (numerical, vs a brute-force reference)              #
+# --------------------------------------------------------------------------- #
+#
+# One tetrahedron, many query points -- the ordinary `dt_mesh` call shape.
+# Vertices/faces describe a *single* mesh and are never batched (only `loc`
+# is); see fastfields#32.
+
+# Unit tetrahedron, faces oriented outwards (needed for the signed variant,
+# whose sign comes from the pseudo-normals of the nearest entity).
+_TETRA_VERTS = np.array(
+    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+)
+_TETRA_FACES = np.array([[0, 2, 1], [0, 3, 2], [0, 1, 3], [1, 2, 3]])
+
+
+def _closest_point_on_triangle(p, a, b, c):
+    """Closest point to `p` on triangle `abc` (Ericson, RTCD 5.1.5)."""
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = ab @ ap, ac @ ap
+    if d1 <= 0 and d2 <= 0:
+        return a
+    bp = p - b
+    d3, d4 = ab @ bp, ac @ bp
+    if d3 >= 0 and d4 <= d3:
+        return b
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        return a + (d1 / (d1 - d3)) * ab
+    cp = p - c
+    d5, d6 = ab @ cp, ac @ cp
+    if d6 >= 0 and d5 <= d6:
+        return c
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        return a + (d2 / (d2 - d6)) * ac
+    va = d3 * d6 - d5 * d4
+    if va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0:
+        return b + ((d4 - d3) / ((d4 - d3) + (d5 - d6))) * (c - b)
+    denom = 1.0 / (va + vb + vc)
+    return a + ab * (vb * denom) + ac * (vc * denom)
+
+
+def _mesh_dt_reference(loc, verts, faces):
+    """Brute force: per point, scan every triangle.
+
+    Returns ``(dist, nearest_vertex)`` where ``dist`` is the *unsigned*
+    Euclidean distance to the mesh surface and ``nearest_vertex`` is the
+    vertex of the closest triangle that is nearest to the projection --
+    the convention implemented by the kernel's ``get_nearest_vertex``.
+    """
+    flat = loc.reshape(-1, loc.shape[-1])
+    dist = np.empty(len(flat))
+    near = np.empty(len(flat), dtype=np.int64)
+    for i, p in enumerate(flat):
+        best_d, best_proj, best_face = np.inf, None, None
+        for face in faces:
+            q = _closest_point_on_triangle(p, *[verts[j] for j in face])
+            d = np.linalg.norm(p - q)
+            if d < best_d:
+                best_d, best_proj, best_face = d, q, face
+        dist[i] = best_d
+        vd = [np.linalg.norm(verts[j] - best_proj) for j in best_face]
+        near[i] = best_face[int(np.argmin(vd))]
+    batch = loc.shape[:-1]
+    return dist.reshape(batch), near.reshape(batch)
+
+
+def _inside_convex(loc, verts, faces):
+    """Inside test for a *convex* mesh with outward-oriented faces."""
+    flat = loc.reshape(-1, loc.shape[-1])
+    inside = np.ones(len(flat), dtype=bool)
+    for face in faces:
+        a, b, c = (verts[j] for j in face)
+        n = np.cross(b - a, c - a)
+        inside &= (flat - a) @ n <= 0
+    return inside.reshape(loc.shape[:-1])
+
+
+def _query_points(rng, n):
+    """Random points around *and inside* the tetrahedron.
+
+    The tetrahedron occupies a small fraction of its bounding box, so
+    uniform box sampling alone would essentially never land inside it and
+    the signed test would never see a negative distance. Barycentric
+    samples are mixed in to guarantee interior points.
+
+    Points very close to the surface are dropped: the *sign* is ambiguous
+    there, and so is the nearest face when two are equidistant.
+    """
+    outer = rng.uniform(-0.6, 1.2, size=(3 * n, 3))
+    inner = rng.dirichlet(np.ones(4), size=n) @ _TETRA_VERTS
+    pts = np.concatenate([outer, inner])
+    d, _ = _mesh_dt_reference(pts, _TETRA_VERTS, _TETRA_FACES)
+    pts = pts[d > 1e-2]
+    rng.shuffle(pts)
+    return pts[:n]
+
+
+@pytest.mark.parametrize("naive", [False, True])
+def test_dt_mesh_unsigned_matches_bruteforce(naive):
+    rng = np.random.default_rng(0)
+    loc = _query_points(rng, 24)
+    ref, _ = _mesh_dt_reference(loc, _TETRA_VERTS, _TETRA_FACES)
+
+    out = ff.dt_mesh(
+        loc, _TETRA_VERTS, _TETRA_FACES, signed=False, naive=naive
+    )
+
+    assert out.shape == loc.shape[:-1]
+    assert out.dtype == loc.dtype
+    np.testing.assert_allclose(out, ref, rtol=1e-10, atol=1e-10)
+
+
+@pytest.mark.parametrize("naive", [False, True])
+def test_dt_mesh_signed_matches_bruteforce(naive):
+    rng = np.random.default_rng(1)
+    loc = _query_points(rng, 24)
+    ref, _ = _mesh_dt_reference(loc, _TETRA_VERTS, _TETRA_FACES)
+    sign = np.where(_inside_convex(loc, _TETRA_VERTS, _TETRA_FACES), -1.0, 1.0)
+
+    out = ff.dt_mesh(loc, _TETRA_VERTS, _TETRA_FACES, signed=True, naive=naive)
+
+    np.testing.assert_allclose(out, sign * ref, rtol=1e-10, atol=1e-10)
+    # the tetrahedron is a closed surface: some points really are inside
+    assert (sign < 0).any()
+
+
+@pytest.mark.parametrize("signed", [False, True])
+def test_dt_mesh_return_nearest_matches_bruteforce(signed):
+    rng = np.random.default_rng(2)
+    loc = _query_points(rng, 24)
+    ref, ref_near = _mesh_dt_reference(loc, _TETRA_VERTS, _TETRA_FACES)
+    if signed:
+        ref = ref * np.where(
+            _inside_convex(loc, _TETRA_VERTS, _TETRA_FACES), -1.0, 1.0
+        )
+
+    dist, near = ff.dt_mesh(
+        loc, _TETRA_VERTS, _TETRA_FACES, signed=signed, return_nearest=True
+    )
+
+    assert near.shape == loc.shape[:-1]
+    assert near.dtype == np.int64
+    np.testing.assert_allclose(dist, ref, rtol=1e-10, atol=1e-10)
+    np.testing.assert_array_equal(near, ref_near)
+
+
+def test_dt_mesh_default_return_nearest_false_runs():
+    # `return_nearest=False` is the default and passes a null `nearest_vertex`
+    # down to the binding; that null used to be caught by the hub's
+    # same-device check and reported as a (bogus) device mismatch --
+    # fastfields#32.
+    rng = np.random.default_rng(3)
+    loc = _query_points(rng, 8)
+    out = ff.dt_mesh(loc, _TETRA_VERTS, _TETRA_FACES)
+    assert isinstance(out, np.ndarray)
+    assert out.shape == loc.shape[:-1]
+
+
+def test_dt_mesh_batched_query_points():
+    # only `loc` carries batch dims; the outputs take loc.shape[:-1]
+    rng = np.random.default_rng(4)
+    loc = _query_points(rng, 12).reshape(3, 4, 3)
+    ref, ref_near = _mesh_dt_reference(loc, _TETRA_VERTS, _TETRA_FACES)
+
+    dist, near = ff.dt_mesh(
+        loc, _TETRA_VERTS, _TETRA_FACES, signed=False, return_nearest=True
+    )
+
+    assert dist.shape == (3, 4)
+    np.testing.assert_allclose(dist, ref, rtol=1e-10, atol=1e-10)
+    np.testing.assert_array_equal(near, ref_near)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_dt_mesh_dtypes(dtype):
+    rng = np.random.default_rng(5)
+    loc = _query_points(rng, 12)
+    ref, _ = _mesh_dt_reference(loc, _TETRA_VERTS, _TETRA_FACES)
+    out = ff.dt_mesh(
+        loc.astype(dtype),
+        _TETRA_VERTS.astype(dtype),
+        _TETRA_FACES,
+        signed=False,
+    )
+    assert out.dtype == dtype
+    np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+
+def test_dt_mesh_rejects_batched_mesh():
+    # A batched mesh is not a supported shape (jitfields has no such mode
+    # either); it must be rejected here with a clear message rather than
+    # deep inside the native shape checks.
+    rng = np.random.default_rng(6)
+    loc = _query_points(rng, 5)
+    with pytest.raises(ValueError, match="vertices must be a 2D"):
+        ff.dt_mesh(loc, np.broadcast_to(_TETRA_VERTS, (5, 4, 3)), _TETRA_FACES)
+    with pytest.raises(ValueError, match="faces must be a 2D"):
+        ff.dt_mesh(loc, _TETRA_VERTS, np.broadcast_to(_TETRA_FACES, (5, 4, 3)))
+
+
+# --------------------------------------------------------------------------- #
 # compact-symmetric linear algebra                                            #
 # --------------------------------------------------------------------------- #
 
