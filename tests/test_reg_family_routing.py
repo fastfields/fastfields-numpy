@@ -143,6 +143,21 @@ _CASES = {
     "flow_subdiag_": lambda: ff.flow_subdiag_(
         _x(), membrane=1.0, voxel_size=VS, ndim=NDIM
     ),
+    "flow_matvec_rls": lambda: ff.flow_matvec_rls(
+        _x(), _wgt(), membrane=1.0, voxel_size=VS, ndim=NDIM
+    ),
+    "flow_diag_rls": lambda: ff.flow_diag_rls(
+        _wgt(), membrane=1.0, voxel_size=VS, ndim=NDIM
+    ),
+    "flow_relax_rls": lambda: ff.flow_relax_rls(
+        _x(),
+        _hes(),
+        np.ones(SHAPE),
+        _wgt(),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
 }
 
 

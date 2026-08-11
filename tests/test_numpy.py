@@ -1248,6 +1248,116 @@ def test_field_relax_rls_is_in_place():
 
 
 # --------------------------------------------------------------------------- #
+# Flow RLS/JRLS                                                               #
+#                                                                             #
+# The flow weighting is always *joint*: the trailing axis holds the           #
+# components of one displacement vector, so `wgt` has a trailing size-1 axis  #
+# (there is no per-channel RLS mode as on the field side). `bending` has no   #
+# weighted kernel and is rejected.                                            #
+# --------------------------------------------------------------------------- #
+
+_FLOW_RLS_KW = [
+    {"absolute": 1.75},
+    {"absolute": 0.3, "membrane": 1.0},
+    {"shears": 1.3, "div": 0.7},
+    {"absolute": 0.5, "membrane": 0.9, "shears": 1.3, "div": 0.7},
+]
+
+
+@pytest.mark.parametrize("kw", _FLOW_RLS_KW)
+def test_flow_matvec_rls_unit_weight_matches_flow_matvec(kw):
+    # An all-ones weight map degenerates the weighted operator to the plain
+    # one -- the same oracle used for field_matvec_rls.
+    rng = np.random.default_rng(51)
+    H, W, D = 6, 7, 2
+    x = rng.standard_normal((H, W, D))
+    expect = ff.flow_matvec(x, ndim=2, **kw)
+    got = ff.flow_matvec_rls(x, np.ones((H, W, 1)), ndim=2, **kw)
+    np.testing.assert_allclose(got, expect, atol=1e-10)
+
+
+@pytest.mark.parametrize("kw", _FLOW_RLS_KW)
+def test_flow_matvec_rls_is_self_adjoint(kw):
+    # L(w) stays symmetric for a fixed weight map: <Lx, y> == <x, Ly>.
+    # Mirrors fastfields-cpu-lib's run_2d_matvec_rls_symmetry.
+    rng = np.random.default_rng(52)
+    H, W, D = 5, 6, 2
+    x = rng.standard_normal((H, W, D))
+    y = rng.standard_normal((H, W, D))
+    wgt = 0.5 + np.abs(rng.standard_normal((H, W, 1)))
+    lx = ff.flow_matvec_rls(x, wgt, ndim=2, **kw)
+    ly = ff.flow_matvec_rls(y, wgt, ndim=2, **kw)
+    np.testing.assert_allclose(
+        float((lx * y).sum()), float((x * ly).sum()), rtol=1e-10
+    )
+    # ... and the weighting is real: a non-constant w changes the operator.
+    assert not np.allclose(lx, ff.flow_matvec(x, ndim=2, **kw))
+
+
+def test_flow_diag_rls_matches_matvec_rls_on_impulse():
+    rng = np.random.default_rng(53)
+    H, W, D = 6, 7, 2
+    kw = dict(absolute=0.3, membrane=1.0, shears=0.5, div=0.4, ndim=2)
+    wgt = 0.5 + np.abs(rng.standard_normal((H, W, 1)))
+    d = ff.flow_diag_rls(wgt, **kw)
+    assert d.shape == (H, W, D)
+    i, j, c = 3, 3, 1
+    e = np.zeros((H, W, D))
+    e[i, j, c] = 1.0
+    o = ff.flow_matvec_rls(e, wgt, **kw)
+    np.testing.assert_allclose(d[i, j, c], o[i, j, c], atol=1e-8)
+
+
+def test_flow_relax_rls_solves_system():
+    rng = np.random.default_rng(54)
+    H, W, D, hdiag = 6, 7, 2, 8.0
+    kw = dict(absolute=0.3, membrane=0.7, shears=1.0, div=0.5, ndim=2)
+    hes = np.zeros((H, W, D * (D + 1) // 2))
+    hes[..., 0] = hdiag
+    hes[..., 1] = hdiag
+    grd = rng.standard_normal((H, W, D))
+    wgt = 0.5 + np.abs(rng.standard_normal((H, W, 1)))
+    x = ff.flow_relax_rls(
+        np.zeros((H, W, D)), hes, grd, wgt, nb_iter=250, **kw
+    )
+    lx = ff.flow_matvec_rls(x, wgt, **kw)
+    rel = np.linalg.norm(hdiag * x + lx - grd) / np.linalg.norm(grd)
+    assert rel < 3e-3
+
+
+def test_flow_relax_rls_is_in_place():
+    sol = np.zeros((6, 6, 2))
+    hes = np.zeros((6, 6, 3))
+    hes[..., 0] = hes[..., 1] = 6.0
+    grd = np.ones((6, 6, 2))
+    wgt = np.ones((6, 6, 1))
+    out = ff.flow_relax_rls(
+        sol, hes, grd, wgt, membrane=1.0, ndim=2, nb_iter=4
+    )
+    assert out is sol
+    assert np.any(sol != 0.0)
+
+
+def test_flow_rls_rejects_bending():
+    rng = np.random.default_rng(55)
+    x = rng.standard_normal((6, 6, 2))
+    wgt = np.ones((6, 6, 1))
+    with pytest.raises((ValueError, RuntimeError)):
+        ff.flow_matvec_rls(x, wgt, bending=1.0, ndim=2)
+    with pytest.raises((ValueError, RuntimeError)):
+        ff.flow_diag_rls(wgt, bending=1.0, ndim=2)
+    with pytest.raises((ValueError, RuntimeError)):
+        ff.flow_relax_rls(
+            np.zeros((6, 6, 2)),
+            np.ones((6, 6, 3)),
+            np.ones((6, 6, 2)),
+            wgt,
+            bending=1.0,
+            ndim=2,
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Accumulate ops: one in-place kernel, two spellings                          #
 #                                                                             #
 # The C primitive is in-place only; the out-of-place spelling copies first and#
