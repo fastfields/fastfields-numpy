@@ -12,7 +12,8 @@ bindings.
   layer wraps them so every function accepts numpy arrays and **returns a fresh
   numpy array** (inputs untouched unless `inplace=True`).
 - Adds validation, zero-copy batch broadcasting, and output allocation.
-- Depends only on `fastfields-dlpack` + numpy.
+- Depends on `fastfields-dlpack` (compiled bindings) + `fastfields-helpers`
+  (the `Spline`/`Bound` enums and argument normalisers) + numpy.
 
 ## Exposed capabilities (feature level)
 - **Distance**: `dt_euclidean`, `dt_l1` (along

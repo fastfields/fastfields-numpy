@@ -36,7 +36,7 @@ and resampling).
 
 from __future__ import annotations
 
-from fastfields.dlpack import Bound, Spline
+from fastfields.helpers import Bound, Spline
 
 from ._dt import (
     dt_euclidean,
