@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Sequence
 
 import fastfields.dlpack as _ff
-from fastfields.dlpack import (
+from fastfields.helpers import (
     anchor_scale_shift,
     infer_ndim,
     resolve_out_spatial,
@@ -82,7 +82,7 @@ def _resize_shapes(
     """Return the batch, input-spatial, and output-spatial shapes.
 
     The output spatial shape is resolved via
-    :func:`fastfields.dlpack.resolve_out_spatial` so every backend shares one
+    :func:`fastfields.helpers.resolve_out_spatial` so every backend shares one
     implementation. Raises ``ValueError`` if ``factor``/``shape`` do not have
     length ``ndim``.
     """

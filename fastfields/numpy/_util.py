@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-# `order`/`bound` normalisation is centralised in fastfields.dlpack so
+# `order`/`bound` normalisation is centralised in fastfields.helpers so
 # every backend shares one implementation; re-export under the private
 # names the numpy modules (_dt, _resample) already import.
-from fastfields.dlpack import as_bound as _as_bound  # noqa: F401
-from fastfields.dlpack import as_spline as _as_spline  # noqa: F401
+from fastfields.helpers import as_bound as _as_bound  # noqa: F401
+from fastfields.helpers import as_spline as _as_spline  # noqa: F401
 
 import numpy as np
 
