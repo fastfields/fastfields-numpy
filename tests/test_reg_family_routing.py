@@ -8,9 +8,10 @@ additionally offers the cross-channel Lame terms (``shears``/``div``).
 Upstream ``jitfields`` shipped a copy-paste bug of exactly this shape:
 ``jitfields.field_kernel_add`` / ``field_kernel_add_`` (and the ``_sub``
 wrappers that delegate to them) call the low-level ``flow_kernel`` binding
-instead of ``field_kernel``.  fastfields does not reproduce it today, but the
-kernel accumulate wrappers are still being ported, so these tests pin the
-routing down mechanically.
+instead of ``field_kernel``.  fastfields does not reproduce it -- and now that
+``field_addkernel`` / ``field_subkernel`` and their flow counterparts are
+exposed here, the cases below cover precisely the wrappers that carried the
+upstream bug.
 
 Why this needs to be a *routing* test and not only a numeric one: with an
 isotropic ``voxel_size`` and no Lame terms the two families produce identical
@@ -103,6 +104,45 @@ _CASES = {
     "field_subdiag_": lambda: ff.field_subdiag_(
         _x(), membrane=1.0, voxel_size=VS, ndim=NDIM
     ),
+    # The stencil accumulate family: `inp` is shaped like field_kernel's
+    # output, which is exactly where jitfields' copy-paste bug lived (its
+    # field_kernel_add called the flow_kernel binding), so these matter most.
+    "field_addkernel": lambda: ff.field_addkernel(
+        ff.field_kernel(NDIM, membrane=1.0, channels=NDIM, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "field_subkernel": lambda: ff.field_subkernel(
+        ff.field_kernel(NDIM, membrane=1.0, channels=NDIM, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "field_addkernel_": lambda: ff.field_addkernel_(
+        ff.field_kernel(NDIM, membrane=1.0, channels=NDIM, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "field_subkernel_": lambda: ff.field_subkernel_(
+        ff.field_kernel(NDIM, membrane=1.0, channels=NDIM, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "field_precond_": lambda: ff.field_precond_(
+        _x(), _hes(), membrane=1.0, voxel_size=VS, ndim=NDIM
+    ),
+    "field_cg": lambda: ff.field_cg(
+        np.zeros(SHAPE),
+        _hes(),
+        np.ones(SHAPE),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+        nb_iter=2,
+    ),
     "flow_matvec": lambda: ff.flow_matvec(
         _x(), membrane=1.0, voxel_size=VS, ndim=NDIM
     ),
@@ -157,6 +197,33 @@ _CASES = {
         membrane=1.0,
         voxel_size=VS,
         ndim=NDIM,
+    ),
+    "flow_addkernel": lambda: ff.flow_addkernel(
+        ff.flow_kernel(NDIM, membrane=1.0, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "flow_subkernel": lambda: ff.flow_subkernel(
+        ff.flow_kernel(NDIM, membrane=1.0, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "flow_addkernel_": lambda: ff.flow_addkernel_(
+        ff.flow_kernel(NDIM, membrane=1.0, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "flow_subkernel_": lambda: ff.flow_subkernel_(
+        ff.flow_kernel(NDIM, membrane=1.0, voxel_size=VS),
+        membrane=1.0,
+        voxel_size=VS,
+        ndim=NDIM,
+    ),
+    "flow_precond_": lambda: ff.flow_precond_(
+        _x(), _hes(), membrane=1.0, voxel_size=VS, ndim=NDIM
     ),
 }
 

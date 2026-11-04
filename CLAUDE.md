@@ -23,13 +23,29 @@ bindings.
   `sym_addmatvec_`/`sym_submatvec_`, `sym_matvec_backward`, `sym_solve`,
   `sym_invert`.
 - **Resampling**: `spline_coeff`, `resample`, `restriction`.
+- **Pushpull**: `pull`, `push`, `count`, `grad`.
+- **Regularisers**: `{field,flow}_{matvec,diag,kernel}` + their
+  `add`/`sub` accumulate forms, the `_rls` weighted variants, `*_relax`,
+  and the regularised system `*_forward` / `*_precond[_]` / `field_cg`.
 - `Spline`/`Bound` enums re-exported; order/bound args accept int, enum, or a
   friendly string (`"cubic"`, `"dct2"`, …).
+
+**Coverage is enforced, not remembered.** `tests/test_api_coverage.py`
+compares this package's `__all__` against `fastfields.dlpack.__all__` and
+fails on any binding that is neither wrapped nor listed in its `DELIBERATE`
+dict with a reason. The only deliberate omissions are the four pushpull
+adjoints (`pull_backward`/`push_backward`/`count_backward`/`grad_backward`):
+they exist for autograd, numpy has none, and they stay reachable raw. The
+full hub→binding→wrapper matrix is `tools/api_inventory.py` in
+`fastfields-dlpack`.
 
 ## Layout
 `fastfields/numpy/`: `__init__.py` (public surface), `_dt.py` (distance),
 `_sym.py` (posdef), `_resample.py` (resample/restriction/spline_coeff),
-`_util.py` (validation/allocation helpers). `tests/test_numpy.py`.
+`_pushpull.py`, `_reg.py` (regularisers), `_util.py`
+(validation/allocation helpers). `tests/test_numpy.py`,
+`tests/test_reg_family_routing.py`, `tests/test_reg_system.py`,
+`tests/test_api_coverage.py`.
 
 ## Build & test
 ```
