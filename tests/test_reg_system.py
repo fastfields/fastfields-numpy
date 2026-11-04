@@ -22,10 +22,18 @@ import fastfields.numpy as ff
 NDIM = 2
 SPATIAL = (5, 6)
 VS = [1.0, 1.2]
-FIELD_PEN = {"absolute": [0.1, 0.2], "membrane": [0.5, 0.3],
-             "bending": [0.05, 0.02]}
-FLOW_PEN = {"absolute": 0.1, "membrane": 0.5, "bending": 0.0,
-            "shears": 0.2, "div": 0.1}
+FIELD_PEN = {
+    "absolute": [0.1, 0.2],
+    "membrane": [0.5, 0.3],
+    "bending": [0.05, 0.02],
+}
+FLOW_PEN = {
+    "absolute": 0.1,
+    "membrane": 0.5,
+    "bending": 0.0,
+    "shears": 0.2,
+    "div": 0.1,
+}
 KW = {"voxel_size": VS, "bound": "dct2", "ndim": NDIM}
 
 
@@ -87,8 +95,10 @@ def test_leading_batch_dims_still_broadcast(op):
     single = getattr(ff, f"field_{op}")(hes, vec, **FIELD_PEN, **KW)
 
     batched = getattr(ff, f"field_{op}")(
-        hes[None], np.broadcast_to(vec, (3,) + vec.shape).copy(),
-        **FIELD_PEN, **KW,
+        hes[None],
+        np.broadcast_to(vec, (3,) + vec.shape).copy(),
+        **FIELD_PEN,
+        **KW,
     )
     assert batched.shape == (3,) + single.shape
     for i in range(3):
@@ -139,8 +149,9 @@ def test_out_of_place_precond_leaves_its_input_alone():
 def test_field_cg_solves_what_field_forward_applies():
     hes, grd = _operands(2, seed=3)
     sol = np.zeros_like(grd)
-    returned = ff.field_cg(sol, hes, grd, **FIELD_PEN, **KW,
-                           nb_iter=200, tol=1e-12)
+    returned = ff.field_cg(
+        sol, hes, grd, **FIELD_PEN, **KW, nb_iter=200, tol=1e-12
+    )
     assert returned is sol  # in place, like field_relax
     applied = ff.field_forward(hes, sol, **FIELD_PEN, **KW)
     np.testing.assert_allclose(applied, grd, rtol=1e-8, atol=1e-10)
@@ -149,8 +160,14 @@ def test_field_cg_solves_what_field_forward_applies():
 def test_field_cg_return_info():
     hes, grd = _operands(2, seed=3)
     sol, info = ff.field_cg(
-        np.zeros_like(grd), hes, grd, **FIELD_PEN, **KW,
-        nb_iter=200, tol=1e-12, return_info=True,
+        np.zeros_like(grd),
+        hes,
+        grd,
+        **FIELD_PEN,
+        **KW,
+        nb_iter=200,
+        tol=1e-12,
+        return_info=True,
     )
     assert isinstance(info.iterations, int)
     assert 0 < info.iterations <= 200
@@ -164,8 +181,14 @@ def test_field_cg_return_info():
 def test_field_cg_honours_the_iteration_cap():
     hes, grd = _operands(2, seed=5)
     _, info = ff.field_cg(
-        np.zeros_like(grd), hes, grd, **FIELD_PEN, **KW,
-        nb_iter=3, tol=0.0, return_info=True,
+        np.zeros_like(grd),
+        hes,
+        grd,
+        **FIELD_PEN,
+        **KW,
+        nb_iter=3,
+        tol=0.0,
+        return_info=True,
     )
     assert info.iterations <= 3
 
@@ -175,8 +198,14 @@ def test_field_cg_warm_start():
     sol = np.zeros_like(grd)
     ff.field_cg(sol, hes, grd, **FIELD_PEN, **KW, nb_iter=200, tol=1e-12)
     _, info = ff.field_cg(
-        sol.copy(), hes, grd, **FIELD_PEN, **KW,
-        nb_iter=200, tol=1e-8, return_info=True,
+        sol.copy(),
+        hes,
+        grd,
+        **FIELD_PEN,
+        **KW,
+        nb_iter=200,
+        tol=1e-8,
+        return_info=True,
     )
     assert info.iterations <= 2
 
@@ -199,24 +228,30 @@ def _flow_kernel():
 def test_field_addkernel_on_zeros_is_field_kernel():
     k = _field_kernel()
     np.testing.assert_allclose(
-        ff.field_addkernel(np.zeros_like(k), **FIELD_PEN, **KW), k,
-        rtol=1e-12, atol=1e-12,
+        ff.field_addkernel(np.zeros_like(k), **FIELD_PEN, **KW),
+        k,
+        rtol=1e-12,
+        atol=1e-12,
     )
 
 
 def test_field_subkernel_on_zeros_is_minus_field_kernel():
     k = _field_kernel()
     np.testing.assert_allclose(
-        ff.field_subkernel(np.zeros_like(k), **FIELD_PEN, **KW), -k,
-        rtol=1e-12, atol=1e-12,
+        ff.field_subkernel(np.zeros_like(k), **FIELD_PEN, **KW),
+        -k,
+        rtol=1e-12,
+        atol=1e-12,
     )
 
 
 def test_flow_addkernel_on_zeros_is_flow_kernel():
     k = _flow_kernel()
     np.testing.assert_allclose(
-        ff.flow_addkernel(np.zeros_like(k), **FLOW_PEN, **KW), k,
-        rtol=1e-12, atol=1e-12,
+        ff.flow_addkernel(np.zeros_like(k), **FLOW_PEN, **KW),
+        k,
+        rtol=1e-12,
+        atol=1e-12,
     )
 
 
@@ -231,8 +266,9 @@ def test_add_then_sub_kernel_round_trips(family, kernel, pen):
     np.testing.assert_allclose(back, start, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize("family,pen", [("field", FIELD_PEN),
-                                        ("flow", FLOW_PEN)])
+@pytest.mark.parametrize(
+    "family,pen", [("field", FIELD_PEN), ("flow", FLOW_PEN)]
+)
 @pytest.mark.parametrize("sign", ["add", "sub"])
 def test_inplace_kernel_mutates_and_matches_functional(family, pen, sign):
     kernel = _field_kernel if family == "field" else _flow_kernel
@@ -245,8 +281,9 @@ def test_inplace_kernel_mutates_and_matches_functional(family, pen, sign):
     np.testing.assert_allclose(buf, expected, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize("family,pen", [("field", FIELD_PEN),
-                                        ("flow", FLOW_PEN)])
+@pytest.mark.parametrize(
+    "family,pen", [("field", FIELD_PEN), ("flow", FLOW_PEN)]
+)
 def test_functional_kernel_accumulate_leaves_input_alone(family, pen):
     kernel = _field_kernel if family == "field" else _flow_kernel
     start = kernel() * 0.25
